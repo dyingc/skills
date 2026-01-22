@@ -1,134 +1,161 @@
-# Deadlock Prevention in GDB Scripts
+# GDB 脚本死锁预防
 
-## Table of Contents
-- [Common Deadlock Scenarios](#common-deadlock-scenarios)
-- [Command Failure Cascade](#command-failure-cascade)
-- [Script Design Guidelines](#script-design-guidelines)
-- [Testing Checklist](#testing-checklist)
-- [Recovery from Deadlocks](#recovery-from-deadlocks)
+## 目录
+- [常见死锁场景](#常见死锁场景)
+- [命令失败级联](#命令失败级联)
+- [脚本设计准则](#脚本设计准则)
+- [测试清单](#测试清单)
+- [死锁恢复](#死锁恢复)
 
-## Common Deadlock Scenarios
+## 常见死锁场景
 
-**Important**: GDB scripts run non-interactively. Deadlocks are particularly problematic because:
-- No interactive recovery possible
-- Script may hang indefinitely
-- Session state becomes unpredictable
+**重要**: GDB 脚本以非交互模式运行。死锁特别严重因为:
+- 无法交互式恢复
+- 脚本可能无限挂起
+- 会话状态变得不可预测
 
-### 1. `until` with unreachable address
+### 1. `until` 无法到达的地址
 
 ```gdb
-until 0x12345678  # HANGS if address never reached!
+until 0x12345678  # 若地址永远不会到达则死锁！
 ```
 
-- **Prevention**: Verify address is on execution path first
-- **Alternative**: Use `break <addr>; continue` instead
+- **预防**: 先验证地址在执行路径上
+- **替代方案**: 使用 `break <addr>; continue`
 
-### 2. `finish` in problematic functions
+### 2. `finish` 在问题函数中
 
 ```gdb
-finish  # HANGS in main() or functions calling exit()!
+finish  # 在 main() 或调用 exit() 的函数中死锁！
 ```
 
-- **High-risk**: `main()`, functions calling `exit()`/`_exit()`, signal handlers
-- **Prevention**: Use `continue` to next breakpoint instead
-- **Test**: Always test `finish` interactively before scripting
+- **高风险**: `main()`、调用 `exit()`/`_exit()` 的函数、信号处理函数
+- **预防**: 使用 `continue` 到下一个断点
+- **测试**: 脚本化前先交互式测试 `finish`
 
-### 3. `continue` without reachable breakpoints
+### 3. `continue` 无可达断点
 
 ```gdb
-continue  # Runs forever if no breakpoint or infinite loop!
+continue  # 若无断点或死循环则永远运行！
 ```
 
-- **Prevention**: Always ensure at least one reachable breakpoint exists
-- **Verification**: List breakpoints before `continue` with `info breakpoints`
+- **预防**: 确保至少有一个可达断点
+- **验证**: `continue` 前用 `info breakpoints` 列出断点
 
-### 4. Conditional breakpoints that never trigger
+### 4. 永不触发的条件断点
 
 ```gdb
-break *0x12345678 if $rax == 999999  # May never trigger!
+break *0x12345678 if $rax == 999999  # 可能永不触发！
 continue
 ```
 
-- **Prevention**: Test conditions interactively first
-- **Alternative**: Use unconditional breakpoint + manual condition check
+- **预防**: 先交互式测试条件
+- **替代方案**: 使用无条件断点 + 手动条件检查
 
-### 5. Commands that require input
+### 5. 需要输入的命令
 
 ```gdb
-run  # HANGS waiting for stdin input
+run  # 等待 stdin 输入时死锁
 ```
 
-- **Prevention**: Always provide input via file: `run < input.txt` or `set args < input.txt`
+- **预防**: 始终通过文件提供输入: `run < input.txt` 或 `set args < input.txt`
 
-## Command Failure Cascade
+## 命令失败级联
 
 ```gdb
-# RISKY: If program exits after continue, rest is skipped
+# 风险: 若程序在 continue 后退出，后续命令被跳过
 continue
-x/s $rdi  # Never executes if program exited
+x/s $rdi  # 程序退出则不执行
 
-# SAFER: Check if still running after continue
+# 更安全: continue 后检查是否仍在运行
 continue
 if $_inferior == 0
-  echo [!] Program exited unexpectedly\n
+  echo [!] 程序意外退出\n
 else
-  echo [+] Still running\n
+  echo [+] 程序运行中\n
   x/s $rdi
 end
 ```
 
-Use `$_inferior` convenience variable:
-- `0`: No inferior (program exited or not started)
-- Non-zero: Inferior running
+使用 `$_inferior` 便捷变量:
+- `0`: 无下级进程（程序退出或未启动）
+- 非零: 下级进程运行中
 
-## Script Design Guidelines
+## 脚本设计准则
 
-### 1. Always set breakpoints before execution
+### 1. 执行前先设置断点
 
 ```gdb
-# GOOD: Set breakpoints first
+# 正确: 先设置断点
 break *0x12345678
 run < input.txt
 continue
 ```
 
-### 2. Avoid `until` in scripts
+### 2. 脚本中避免 `until`
 
 ```gdb
-# AVOID
+# 避免
 until 0x12345678
 
-# PREFER
+# 推荐
 break *0x12345678
 continue
 ```
 
-### 3. Avoid `finish` in scripts
+### 3. 脚本中避免 `finish`
 
 ```gdb
-# AVOID
+# 避免
 finish
 
-# PREFER
-break *0x12345678  # Set breakpoint after return
+# 推荐
+break *0x12345678  # 在返回后设置断点
 continue
 ```
 
-## Testing Checklist
+### 4. 始终提供程序输入
 
-Before finalizing a script:
-- [ ] Each command tested interactively
-- [ ] Full sequence tested interactively (via separate MCP calls)
-- [ ] Verify no `until` commands in script
-- [ ] Verify no `finish` commands in script (unless tested)
-- [ ] Verify all breakpoints set before execution
-- [ ] Verify input provided for programs that read stdin
+```gdb
+# 避免
+run
 
-## Recovery from Deadlocks
+# 推荐
+run < input.txt
+# 或
+run < /dev/null
+```
 
-If a script hangs:
-1. Terminate entire GDB session (MCP: `gdb_terminate`)
-2. Start a completely fresh session
-3. Analyze what caused the deadlock (check log file if available)
-4. Fix the issue in the script
-5. Start over from command-by-command verification
+## 测试清单
+
+脚本定稿前检查:
+- [ ] 每条命令都已交互式测试
+- [ ] 完整序列已交互式测试（通过独立 MCP 调用）
+- [ ] 确认脚本中无 `until` 命令
+- [ ] 确认脚本中无 `finish` 命令（除非已测试）
+- [ ] 确认所有断点在执行前设置
+- [ ] 确认读取 stdin 的程序已提供输入
+
+## 死锁恢复
+
+脚本挂起时:
+1. 终止整个 GDB 会话（MCP: `close_session` 或 `gdb_terminate`）
+2. 启动全新会话
+3. 分析死锁原因（检查日志文件）
+4. 修复脚本中的问题
+5. 从逐命令验证重新开始
+
+## 安全命令 vs 风险命令
+
+| 命令 | 风险等级 | 说明 |
+|------|----------|------|
+| `break` | 安全 | 设置断点 |
+| `info` | 安全 | 查看状态 |
+| `print` | 安全 | 计算表达式 |
+| `x` | 安全 | 查看内存 |
+| `stepi` | 低 | 单指令步进 |
+| `nexti` | 低 | 单指令步过 |
+| `continue` | 中 | 需要可达断点 |
+| `finish` | 高 | 可能在 main/exit 中挂起 |
+| `until` | 高 | 可能永不到达目标 |
+| `run` | 中 | 无输入时可能挂起 |

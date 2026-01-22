@@ -1,223 +1,137 @@
 ---
 name: gdb-dynamic-analysis
-description: Performs dynamic binary analysis using GDB MCP server. Use when static analysis assumptions need runtime verification, when tracing execution flow, inspecting memory at specific points, observing program behavior at runtime, validating control flow predictions, or debugging binary behavior. Essential for understanding runtime constraints, observing actual program state, and bridging the gap between static analysis and dynamic execution.
-license: MIT License
-compatibility: Requires GDB MCP server with access to binary files
-allowed-tools: create_session close_session get_session get_all_sessions start_debugging stop_debugging get_registers get_register_names get_local_variables get_stack_frames read_memory set_breakpoint delete_breakpoint get_breakpoints continue_execution next_execution step_execution
+description: 使用 GDB MCP 服务器进行动态二进制分析。用于：(1) 验证静态分析假设，(2) 跟踪实际执行流程，(3) 在特定点检查内存和寄存器，(4) 观察运行时程序行为，(5) 调试二进制程序。当用户请求运行时验证、断点调试、内存检查、执行跟踪、或需要观察程序实际运行状态时触发此技能。
 ---
 
-# GDB Dynamic Binary Analysis
+# GDB 动态二进制分析
 
-## When to Use This Skill
+## 核心行为
 
-Invoke this skill when:
-- Static analysis reveals a path that needs runtime verification
-- You need to trace actual execution flow vs theoretical paths
-- Memory contents need inspection at specific program points
-- Register states need verification
-- Input processing needs observation
-- Control flow decisions need validation
-- Function call sequences need confirmation
-- Buffer contents after input processing need inspection
-- Runtime constraints need investigation
+**语言**: 始终使用**简体中文**回复。汇编、代码、函数名、地址保持原样。
 
-## Session Lifecycle
+**角色**: 对等的逆向工程同事，直接坦率。
 
-### Starting a Session
-1. Use `create_session` with `gdb_path` and `working_dir`
-2. Load the program using the session ID
-3. Start debugging with `starti` or `start`
-4. Calculate base address if needed (use `info files` or `info proc mappings`)
+**用户背景**: 安全研究员，熟悉汇编、gdb、逆向工程、漏洞分析。
 
-### Managing Breakpoints
-- Set breakpoints: `set_breakpoint` or via `gdb_command` with `break <address>`
-- View breakpoints: `get_breakpoints`
-- Delete breakpoints: `delete_breakpoint`
+## 工具参考
 
-### Execution Control
-- Continue: `continue_execution`
-- Step over: `next_execution`
-- Step into: `step_execution`
-- Arbitrary commands: `gdb_command` for any GDB command
+**主要工具**: GDB MCP（参见 [references/gdb-mcp-tools.md](references/gdb-mcp-tools.md)）
 
-### Inspection
-- Registers: `get_registers`, `get_register_names`
-- Memory: `read_memory` or `x` command via `gdb_command`
-- Stack: `get_stack_frames`
-- Local variables: `get_local_variables`
-- Print expressions: `gdb_print` (if available) or via `gdb_command`
+| 场景 | 工具 |
+|------|------|
+| 会话管理 | `create_session`, `close_session`, `get_session` |
+| 执行控制 | `start_debugging`, `continue_execution`, `step_execution`, `next_execution` |
+| 断点管理 | `set_breakpoint`, `delete_breakpoint`, `get_breakpoints` |
+| 状态检查 | `get_registers`, `read_memory`, `get_stack_frames`, `get_local_variables` |
+| 任意命令 | `gdb_command` (执行任意 GDB 命令) |
 
-### Cleanup
-Always close sessions with `close_session` when done.
+## 分析工作流
 
-## Common Workflows
+### 1. 会话启动
+```
+□ create_session: 创建 GDB 会话
+□ gdb_command "file <binary>": 加载目标程序
+□ gdb_command "starti": 启动程序（停在入口点）
+□ gdb_command "info files": 获取基地址（用于 ASLR 计算）
+```
 
-### 1. Basic Verification Workflow
-Use to verify static analysis assumptions:
+### 2. 断点设置
+```
+□ 计算实际地址: 基地址 + 静态偏移
+□ set_breakpoint 或 gdb_command "break *<addr>": 设置断点
+□ get_breakpoints: 确认断点已设置
+```
 
-1. Start session and load binary
-2. Set breakpoint at target address (calculate: base + offset)
-3. Run to breakpoint with input if needed
-4. Inspect registers/memory to verify assumptions
-5. Continue execution or inspect further
-6. Close session
+### 3. 执行与检查
+```
+□ continue_execution: 运行到断点
+□ get_registers: 检查寄存器状态
+□ read_memory / gdb_command "x/...": 检查内存
+□ get_stack_frames: 查看调用栈
+```
 
-### 2. Input Observation Workflow
-Use to see how input is processed:
+### 4. 清理
+```
+□ close_session: 关闭会话（必须）
+```
 
-1. Create input file (shell command or script)
-2. Set breakpoint after input is read/stored
-3. Run with input redirected
-4. Examine memory at buffer location
-5. Trace subsequent processing
+## 关键约束
 
-### 3. Trace Execution Workflow
-Use to follow control flow:
+### ASLR 地址计算
+程序每次运行时加载地址不同：
+```
+实际地址 = 基地址 + 静态偏移
 
-1. Set breakpoints at multiple control flow points
-2. Step through or continue to each breakpoint
-3. Record which paths are taken
-4. Compare with static analysis predictions
+示例:
+- 静态分析得到 main 偏移: 0x12f0
+- 运行时基地址 (info files): 0x555555554000
+- 实际断点地址: 0x5555555552f0
+```
 
-### 4. Automated GDB Script Workflow
-For complex multi-step scenarios, see detailed references:
-- **Script development workflow**: [references/scripting-workflow.md](references/scripting-workflow.md)
-- **Deadlock prevention**: [references/deadlock-prevention.md](references/deadlock-prevention.md)
+使用 `scripts/aslr_calc.py` 简化计算。
 
-## Important Considerations
+### 输入处理
+程序需要 stdin 输入时：
+```gdb
+run < input.txt
+```
+使用 `scripts/create_input.py` 生成测试输入。
 
-### GDB Extensions (GEF, Pwndbg, etc.)
-**Important**: Always disable GDB extensions to maintain consistent environment.
-
-**Rationale**:
-- Extensions may change output formats, breaking script parsing
-- Extensions add custom commands that may conflict with standard GDB
-- Reduces complexity and environment variability
-
-**Environment Setup Commands**:
+### GDB 扩展
+**禁用扩展**（GEF、Pwndbg 等）以保持一致的输出格式：
 ```gdb
 set pagination off
 set confirm off
 ```
 
-**Verification**:
-- GEF: Check for `gef-*` commands
-- Pwndbg: Check for custom prompts or enhanced register displays
+### 内存检查格式
+参见 [references/inspection-patterns.md](references/inspection-patterns.md) 获取详细格式。
 
-### ASLR (Address Space Layout Randomization)
-- Programs load at different addresses each run
-- Always calculate: `actual_address = base_address + relative_offset`
-- Get base address from `info files` or `info proc mappings` after `starti`
-  - **Using `info files`**: Look for "Entry point" which gives absolute address; subtract static offset to get base
-  - **Using `info proc mappings`**: Look for the first mapped memory region belonging to the binary (the read-executable segment)
-- Example: If main is at offset 0x12f0 and base is 0x555555554000, set breakpoint at 0x5555555552f0
+常用格式:
+- `x/Nbx <addr>`: N 字节，十六进制
+- `x/s <addr>`: 字符串
+- `x/Ni <addr>`: N 条指令
 
-### Input Handling
-- For programs reading stdin, create input file and redirect: `run < input_file`
-- Use `gdb_command` with shell commands to create inputs
-- Buffer contents can be inspected after they're written
+## GDB 脚本
 
-### Memory Inspection Patterns
-- Use `x/Nbx <address>` for byte display
-- Use `x/s <address>` for string display
-- Use `x/NI <address>` for disassembly
+复杂多步骤场景可使用 GDB 脚本自动化。
 
-### Register Access
-- Use `$rip`, `$rsp`, `$rbp`, etc. in expressions
-- Full register list: `info registers`
-- Specific registers: `info registers <reg1> <reg2>`
+**重要**: 脚本开发遵循严格流程，避免死锁。
 
-## Best Practices
+参见:
+- [references/scripting-workflow.md](references/scripting-workflow.md): 脚本开发流程
+- [references/deadlock-prevention.md](references/deadlock-prevention.md): 死锁预防
 
-### Core Best Practices
+## 与静态分析配合
 
-1. **Always clean up**: Close sessions when complete
-2. **Verify addresses**: Calculate breakpoints correctly considering ASLR
-3. **Start small**: Verify basic workflow before complex analysis
-4. **Use breakpoints strategically**: Don't step through every instruction
-5. **Document findings**: Record what was verified vs what wasn't
+**典型工作流**: 静态分析 → 动态验证 → 回注释
 
-### GDB Scripting
-For complex multi-step scenarios, see detailed references:
-- **Script development workflow**: [references/scripting-workflow.md](references/scripting-workflow.md)
-- **Deadlock prevention**: [references/deadlock-prevention.md](references/deadlock-prevention.md)
+从 **static-binary-analysis** 技能获取:
+- 目标函数的偏移地址（通过 `decompile_function`）
+- 反编译代码作为参考
+- 交叉引用确定断点位置（通过 `get_xrefs_to`）
 
-**When to use scripts**: After interactive verification is complete, for repeatable workflows.
+**验证后**: 将动态分析发现反馈到静态分析，添加注释记录实际运行时行为。
 
-## Example Use Cases
+## 辅助脚本
 
-### Verifying String Length Check
-After static analysis finds a length check at offset:
+位于 `scripts/` 目录:
 
-```python
-# 1. Start session
-session_id = create_session(gdb_path="gdb", working_dir="/path/to/binary")
+- **aslr_calc.py**: `python scripts/aslr_calc.py <base_addr> <offset>` - ASLR 地址计算
+- **create_input.py**: `python scripts/create_input.py <type> [options]` - 生成测试输入
 
-# 2. Load and start
-# (via gdb commands)
+## 参考文档
 
-# 3. Calculate and set breakpoint
-# If check is at 0x1a10 relative
-# Base from info files: 0x555555554000
-# Breakpoint: 0x555555555a10
+- [GDB MCP 工具参考](references/gdb-mcp-tools.md): 所有可用工具的详细用法
+- [内存检查模式](references/inspection-patterns.md): 内存/寄存器检查格式
+- [脚本开发流程](references/scripting-workflow.md): GDB 脚本开发最佳实践
+- [死锁预防](references/deadlock-prevention.md): 脚本死锁场景及预防
 
-# 4. Run with test input
-# Run with input that exceeds expected length
+## 故障排除
 
-# 5. Inspect at breakpoint
-# Check register values (length in rbx, buffer in r12)
-# Verify check logic
-
-# 6. Continue or close
-```
-
-### Tracing Complex Input Handling
-When analyzing programs with complex input processing (e.g., C++ std::cin, scanf, custom parsers):
-
-```python
-# 1. Create GDB script to trace input handling behavior
-# 2. Set breakpoints before and after input operations
-# 3. Run with various test inputs
-# 4. Observe actual execution paths taken
-# 5. Verify buffer handling and edge cases
-```
-
-### Validating Static Analysis Predictions
-Compare static analysis results with dynamic execution:
-
-1. Use static analysis tools (Ghidra, radare2, etc.) to predict execution path
-2. Use GDB to trace actual execution with sample inputs
-3. Compare: branches taken, memory states, function calls, return values
-4. Identify discrepancies for further investigation
-
-## Troubleshooting
-
-### Breakpoint Not Hit
-- Verify address calculation (base + offset)
-- Check if code path is actually reached
-- Ensure input triggers the target code
-
-### Session Issues
-- Close and recreate session
-- Verify binary path is correct
-- Check permissions
-
-### Memory Read Failures
-- Address may be inaccessible (not mapped)
-- Use `info proc mappings` to check memory layout
-- Verify the program state at inspection point
-
-## Integration with Other Tools
-
-This skill works well with:
-- **Ghidra MCP**: Get static analysis, addresses, function offsets for target locations
-- **radare2**: Additional static analysis context and binary information
-- **angr**: Validate symbolic execution assumptions (when applicable)
-- **Any static analysis tool**: Use static results to guide where to set breakpoints and what to inspect
-
-## Notes
-
-- This skill is for **runtime verification**, not primary analysis
-- Always perform static analysis first to know where to look
-- Document both expected and actual behaviors
-- Use findings to refine static analysis or symbolic execution models
+| 问题 | 解决方案 |
+|------|----------|
+| 断点未命中 | 检查地址计算（基地址 + 偏移）；确认代码路径可达 |
+| 会话异常 | `close_session` 后重新创建；检查二进制路径和权限 |
+| 内存读取失败 | `info proc mappings` 检查内存布局；确认地址已映射 |
+| 脚本死锁 | 终止会话，重新开始；参见 [deadlock-prevention.md](references/deadlock-prevention.md) |
