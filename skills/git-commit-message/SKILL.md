@@ -20,14 +20,18 @@ Generate clean git commit messages by analyzing staged changes and commit the ch
 
 3. **Determine language**: Use English by default. Switch to another language only if the user explicitly requests it or if the majority of the codebase/file changes are in that language.
 
-4. **Generate commit message**: Create a concise message following best practices:
-   - Use imperative mood ("add" not "added" or "adds")
-   - Keep it under 72 characters for the first line
-   - Focus on WHAT and WHY, not HOW
-   - Be specific and clear
-   - For complex changes, add a body with more details
+4. **Generate commit message**: Create a message following the 50/72 rule:
+   - **Subject line** (first line): Max 50 characters, imperative mood ("add" not "added" or "adds"), summarize WHAT and WHY
+   - **Body** (optional): For non-trivial changes, add a blank line followed by detailed explanation, wrapped at 72 characters per line
+   - **When to add a body**:
+     - Multiple files changed with different purposes
+     - Bug fixes (explain the bug and solution)
+     - Refactoring (explain the motivation)
+     - Performance changes (include before/after context)
+     - anything that isn't immediately obvious from the diff
+   - **Simple changes**: Subject line only is fine (e.g., typo fixes, straightforward refactorings)
 
-5. **Present to user**: Show the proposed commit message and ask for approval
+5. **Present to user**: Show the proposed commit message and ask for approval. Keep it simple - just show the message, don't explain the format choices.
 
 6. **Commit if approved**: If user approves, run `git commit -m "message"` with the approved message
 
