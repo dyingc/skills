@@ -1,6 +1,6 @@
 ---
 name: gdb-dynamic-analysis
-description: 使用 GDB MCP 服务器进行动态二进制分析。用于：(1) 验证静态分析假设，(2) 跟踪实际执行流程，(3) 在特定点检查内存和寄存器，(4) 观察运行时程序行为，(5) 调试二进制程序。当用户请求运行时验证、断点调试、内存检查、执行跟踪、或需要观察程序实际运行状态时触发此技能。
+description: Dynamic binary analysis using GDB MCP for runtime debugging and verification. Use this skill when the user asks to: (1) Verify static analysis hypotheses at runtime, (2) Debug or trace program execution flow, (3) Set breakpoints and inspect memory/registers at specific points, (4) Observe actual program behavior during execution, (5) Validate assumptions from static analysis, (6) Step through code interactively. This skill complements static analysis by providing runtime validation.
 ---
 
 # GDB 动态二进制分析

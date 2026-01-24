@@ -1,6 +1,6 @@
 ---
 name: static-binary-analysis
-description: 静态二进制分析工具，使用 Ghidra MCP 进行反编译、反汇编、交叉引用分析和漏洞挖掘。用于：(1) 逆向工程和代码审计，(2) CTF 挑战和漏洞研究，(3) 恶意软件分析，(4) 补丁对比分析。当用户请求分析二进制文件、反编译函数、查找漏洞、理解程序逻辑时触发此技能。
+description: Static binary analysis tool using Ghidra MCP for decompilation, disassembly, cross-reference analysis, and vulnerability discovery. Use this skill when the user asks to: (1) Analyze or reverse engineer a binary file, (2) Decompile or disassemble functions, (3) Find vulnerabilities or understand program logic, (4) Search for strings, imports, exports in binaries, (5) Examine binary structure or security protections, (6) Perform code audits or malware analysis. This is the primary skill for initial binary reconnaissance and static analysis.
 ---
 
 # 静态二进制分析
