@@ -76,6 +76,16 @@ description: Static binary analysis tool using Ghidra MCP for decompilation, dis
 
 ## 注释策略
 
+### 注释类型选择
+
+根据信息层级选择合适的注释工具：
+
+| 工具 | 可见性 | 适用层级 | 典型用例 |
+|------|--------|----------|----------|
+| `set_plate_comment` | ⭐⭐⭐ 最高 | 函数级 | "处理用户输入的主函数，存在缓冲区溢出风险" |
+| `set_decompiler_comment` | ⭐⭐ 中 | 代码块级 | "检查输入长度，超过 256 字节则返回错误" |
+| `set_disassembly_comment` | ⭐ 低 | 指令级 | "MOV EAX, [EBP+8] - 加载第一个参数" |
+
 ### 添加注释（主要方式）
 ```
 前缀: "Claude suggests - "
@@ -83,7 +93,16 @@ description: Static binary analysis tool using Ghidra MCP for decompilation, dis
 反编译误导时: 解释汇编实际行为
 ```
 
-使用 `set_decompiler_comment` 或 `set_disassembly_comment`。
+使用 `set_plate_comment`、`set_decompiler_comment` 或 `set_disassembly_comment`。
+
+### 删除注释
+
+所有注释工具都支持通过传递空字符串 "" 作为 comment 参数来删除现有注释：
+```
+set_plate_comment(address, "")  # 删除板注释
+set_decompiler_comment(address, "")  # 删除反编译注释
+set_disassembly_comment(address, "")  # 删除反汇编注释
+```
 
 ### 重命名（谨慎）
 仅在名称明显错误/误导时重命名。先验证逻辑。
