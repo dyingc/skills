@@ -11,6 +11,30 @@ description: >
 
   Prioritizes depth, accuracy, source quality, and rigorous synthesis over creative exploration.
   For idea generation and diverse perspective exploration, use the brainstorm skill instead.
+
+allowed-tools:
+  # MCP Search and Fetch Tools (Required for web research)
+  - mcp__brave-search__brave_web_search
+  - mcp__brave-search__brave_news_search
+  - mcp__brave-search__brave_video_search
+  - mcp__brave-search__brave_image_search
+  - mcp__brave-search__brave_local_search
+  - mcp__brave-search__brave_summarizer
+  - mcp__fetch__fetch
+  - mcp__web_reader__webReader
+
+  # Core tools for research workflow
+  - AskUserQuestion
+  - Task
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+
+  # Context7 for documentation research
+  - mcp__context7__resolve-library-id
+  - mcp__context7__query-docs
 ---
 
 # Research
@@ -628,7 +652,7 @@ If language = "Both", present sections in user's preferred language with key ter
 - **Write/Edit**: Format research report with proper citations
 
 ### Agent 1: Broad Search Tools
-- **WebSearch** (heavy): Multiple targeted searches with different keywords
+- **mcp__brave-search__brave_web_search** (heavy): Multiple targeted searches with different keywords
 - **mcp__web_reader__webReader**: Fetch full articles to assess relevance
 - **Goal**: Identify 10-15 high-quality sources
 - **Output**: Source list with URLs, credibility assessment, brief descriptions
@@ -644,7 +668,7 @@ If language = "Both", present sections in user's preferred language with key ter
 ### Agent 2: Deep Analysis Tools
 - **mcp__web_reader__webReader** (primary): Read full sources thoroughly
 - **Read**: Analyze documentation or reference materials
-- **WebSearch** (supporting): Look up unfamiliar concepts, find related sources
+- **mcp__brave-search__brave_web_search** (supporting): Look up unfamiliar concepts, find related sources
 - **Goal**: Extract key findings, evidence, contradictions
 - **Output**: Detailed findings with quotes, evidence quality assessment
 
@@ -668,7 +692,7 @@ If language = "Both", present sections in user's preferred language with key ter
 - Flag areas needing more research
 
 ### Agent 4: Verification Tools (Optional)
-- **WebSearch**: Spot-check claims, find additional supporting sources
+- **mcp__brave-search__brave_web_search**: Spot-check claims, find additional supporting sources
 - **Read**: Verify accuracy of synthesized conclusions
 - **Goal**: Validate claims, triangulate sources
 - **Output**: Quality assessment, confidence levels
@@ -685,6 +709,22 @@ If language = "Both", present sections in user's preferred language with key ter
 - **Sources over examples**: Authoritative documentation over blog posts
 - **Attribution over creativity**: Every claim traced to sources
 - **Sequential building**: Each agent extends previous agent's work
+
+### WebSearch Rate Limiting
+**Important:** mcp__brave-search__brave_web_search has a rate limit of **1 request per second**. When research agents encounter rate limit errors:
+
+**If mcp__brave-search__brave_web_search fails with rate limit error:**
+- **Back off:** Wait 2-5 seconds (randomize to avoid synchronized retries)
+- **Retry:** Attempt the search again after backing off
+- **Max retries:** If rate limit persists after 2-3 retries, continue with other searches or sources
+
+**Best practices for research agents:**
+- **Space searches naturally:** Work deliberately between searches (analyze results, plan next query)
+- **Prioritize queries:** Start with most important searches first
+- **Implement backoff:** When rate limiting occurs, wait 2-5 seconds then retry
+- **Accept partial results:** Continue research even if some searches fail
+
+**Note:** The sequential workflow naturally spaces out searches, reducing rate limit conflicts. Backoff-and-retry handles occasional conflicts gracefully.
 
 ## Tips
 

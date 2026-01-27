@@ -7,6 +7,27 @@ description: >
   through parallel agent exploration. Supports configurable number of sub-agents (default: 3), adapts
   prompt strategy based on context, and encourages sub-agents to leverage web search for research-backed
   insights. For evidence-based investigation and authoritative synthesis, use the research skill instead.
+
+allowed-tools:
+  # MCP Search and Fetch Tools (Required for web research during brainstorming)
+  - mcp__brave-search__brave_web_search
+  - mcp__brave-search__brave_news_search
+  - mcp__brave-search__brave_video_search
+  - mcp__brave-search__brave_image_search
+  - mcp__brave-search__brave_local_search
+  - mcp__brave-search__brave_summarizer
+  - mcp__fetch__fetch
+  - mcp__web_reader__webReader
+
+  # Core tools for brainstorm workflow
+  - AskUserQuestion
+  - Task
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
 ---
 
 # Brainstorm
@@ -37,7 +58,7 @@ Tailor the brainstorm prompt based on context:
 - Different architectural patterns
 - Trade-offs (performance, complexity, maintainability)
 - Edge cases and failure modes
-Use WebSearch to research current best practices and validate your approaches.
+Use mcp__brave-search__brave_web_search to research current best practices and validate your approaches.
 Be specific and actionable."
 ```
 
@@ -56,7 +77,7 @@ Think expansively."
 - Strategic implications
 - Risks and opportunities
 - Short-term vs long-term trade-offs
-Use WebSearch to research similar case studies and industry benchmarks.
+Use mcp__brave-search__brave_web_search to research similar case studies and industry benchmarks.
 Provide reasoned recommendations with supporting evidence."
 ```
 
@@ -83,7 +104,7 @@ Task(subagent_type="general-purpose", prompt="[ADAPTED_PROMPT]", description="Br
 - **Sub-agents have full tool access** including WebSearch, file operations
 - **Code execution**: Sub-agents should propose code/scripts for you (main agent) to execute
 - **Encourage tool use**: When prompts benefit from current information, explicitly invite web research:
-  - "Use WebSearch to find recent examples and best practices"
+  - "Use mcp__brave-search__brave_web_search to find recent examples and best practices"
   - "Research current industry approaches before suggesting solutions"
   - "Include web sources to support your recommendations"
   - "Propose code snippets or scripts that I can execute to validate your ideas"
@@ -167,6 +188,12 @@ Structure output for readability:
 - **File operations**: Analyze existing codebases, reference documentation, review examples
 - **Research needs**: When brainstorming about fast-moving domains (AI, web frameworks, security)
 
+**Recommended MCP tools for web research:**
+- **mcp__brave-search__brave_web_search**: General web searches for examples and best practices
+- **mcp__brave-search__brave_news_search**: Recent news and market trends
+- **mcp__fetch__fetch**: Fetch specific URLs for detailed analysis
+- **mcp__web_reader__webReader**: Extract content from web pages in markdown format
+
 ## When to Transition to Research
 
 After brainstorming completes, consider transitioning to the research skill if:
@@ -193,7 +220,7 @@ After brainstorming completes, consider transitioning to the research skill if:
 - **Write/Edit**: Format synthesis output
 
 ### Sub-Agent Tools (Parallel, Independent)
-- **WebSearch** (encouraged): Find current examples, best practices, competitive analysis
+- **mcp__brave-search__brave_web_search** (encouraged): Find current examples, best practices, competitive analysis
 - **Read/Grep/Glob** (as needed): Explore existing codebase if relevant to brainstorm
 - **Code proposals**: Suggest scripts for main agent to execute (don't run directly)
 
@@ -202,3 +229,20 @@ After brainstorming completes, consider transitioning to the research skill if:
 - **Speed over thoroughness**: Quick searches to inform creative thinking
 - **Examples over rigor**: Find representative examples, not comprehensive coverage
 - **Parallel exploration**: No agent sees another's output until synthesis phase
+
+### WebSearch Rate Limiting
+**Important:** mcp__brave-search__brave_web_search has a rate limit of **1 request per second**. When sub-agents encounter rate limit errors:
+
+**If mcp__brave-search__brave_web_search fails with rate limit error:**
+- **Back off:** Wait 2-5 seconds (randomize to avoid synchronized retries)
+- **Retry:** Attempt the search again after backing off
+- **Max retries:** If rate limit persists after 2-3 retries, continue with other available information
+
+**Example instruction for sub-agents when encouraging web search:**
+```
+"Use mcp__brave-search__brave_web_search to research [TOPIC]. If you hit rate limits (1 req/sec), back off 2-5 seconds
+and retry. If searches still fail after 2-3 retries, continue with your knowledge and
+other available sources."
+```
+
+**Note:** Parallel agents may occasionally hit rate limits simultaneously. This is normal—the backoff-and-retry strategy resolves conflicts naturally.
