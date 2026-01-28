@@ -710,22 +710,6 @@ If language = "Both", present sections in user's preferred language with key ter
 - **Attribution over creativity**: Every claim traced to sources
 - **Sequential building**: Each agent extends previous agent's work
 
-### WebSearch Rate Limiting
-**Important:** mcp__brave-search__brave_web_search has a rate limit of **1 request per second**. When research agents encounter rate limit errors:
-
-**If mcp__brave-search__brave_web_search fails with rate limit error:**
-- **Back off:** Wait 2-5 seconds (randomize to avoid synchronized retries)
-- **Retry:** Attempt the search again after backing off
-- **Max retries:** If rate limit persists after 2-3 retries, continue with other searches or sources
-
-**Best practices for research agents:**
-- **Space searches naturally:** Work deliberately between searches (analyze results, plan next query)
-- **Prioritize queries:** Start with most important searches first
-- **Implement backoff:** When rate limiting occurs, wait 2-5 seconds then retry
-- **Accept partial results:** Continue research even if some searches fail
-
-**Note:** The sequential workflow naturally spaces out searches, reducing rate limit conflicts. Backoff-and-retry handles occasional conflicts gracefully.
-
 ## Tips
 
 **Research depth vs speed:**
