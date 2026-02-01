@@ -188,8 +188,13 @@ mcp__ghidra__get_xrefs_to(address)
 # Rename function for clarity
 mcp__ghidra__rename_function("old_name", "descriptive_name")
 
-# Set comments
-mcp__ghidra__set_decompiler_comment(address, "Suspicious input handling")
+# Set comments (choose based on visibility level)
+mcp__ghidra__set_plate_comment(address, "函数级摘要：处理用户输入的主函数，存在缓冲区溢出风险")
+mcp__ghidra__set_decompiler_comment(address, "代码块级：检查输入长度，超过 256 字节则返回错误")
+mcp__ghidra__set_disassembly_comment(address, "指令级：MOV EAX, [EBP+8] - 加载第一个参数")
+
+# Remove comments by passing empty string
+mcp__ghidra__set_plate_comment(address, "")
 ```
 
 ### objdump
