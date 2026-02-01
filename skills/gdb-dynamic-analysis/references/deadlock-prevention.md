@@ -139,7 +139,7 @@ run < /dev/null
 ## 死锁恢复
 
 脚本挂起时:
-1. 终止整个 GDB 会话（MCP: `close_session` 或 `gdb_terminate`）
+1. 终止整个 GDB 会话（MCP: `gdb_terminate`）
 2. 启动全新会话
 3. 分析死锁原因（检查日志文件）
 4. 修复脚本中的问题

@@ -19,6 +19,8 @@ description: Static binary analysis tool using Ghidra MCP for decompilation, dis
 
 **补充工具**: radare2 系列，仅在 Ghidra 无法满足时使用（参见 [references/radare2-commands.md](references/radare2-commands.md)）
 
+**禁止工具**: `objdump`、`readelf`、`strings`、除非强烈确信 Ghidra 且 radaare2 无法提供帮助。
+
 | 场景 | 使用工具 |
 |------|----------|
 | 反编译/反汇编 | Ghidra: `decompile_function`, `disassemble_function` |
@@ -33,9 +35,6 @@ description: Static binary analysis tool using Ghidra MCP for decompilation, dis
 
 ### 1. 初始侦察
 ```
-□ list_imports: 识别危险函数 (gets, strcpy, system, sprintf)
-□ list_strings: filter="password|admin|flag|secret"
-□ list_exports: 确认入口点
 □ scripts/check_protections.py: 检查 canary/NX/PIE/RELRO
 ```
 
@@ -47,7 +46,7 @@ description: Static binary analysis tool using Ghidra MCP for decompilation, dis
 □ get_xrefs_from: 追踪被调用者
 ```
 
-### 3. 漏洞识别
+### 3. 漏洞识别 - 如果当前任务是漏洞分析
 参见 [references/vuln-patterns.md](references/vuln-patterns.md) 获取常见漏洞模式。
 
 关键检查点:
@@ -71,8 +70,6 @@ description: Static binary analysis tool using Ghidra MCP for decompilation, dis
 ## 关键约束
 
 **反编译器局限**: Ghidra 的 C 输出可能误导（指针运算、循环、变量流）。可疑时**必须检查汇编**。信任汇编而非反编译 C。
-
-**无直接二进制访问**: 可能无法直接访问二进制文件。优先使用 Ghidra MCP。除非确信 Ghidra 无法提供帮助，否则不要尝试 `objdump`、`readelf`、`strings`、`xxd`。
 
 ## 注释策略
 
