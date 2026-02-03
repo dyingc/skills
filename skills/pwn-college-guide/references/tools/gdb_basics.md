@@ -1,5 +1,10 @@
 # GDB 基础使用指南
 
+> **💡 静态 vs 动态分析**
+> - **静态分析**（分析二进制结构）：优先使用 Ghidra MCP → radare2 → objdump（详见 [static_analysis.md](static_analysis.md)）
+> - **动态分析**（运行时调试）：使用 GDB（本文档）
+> - 两者结合使用效果最佳：先用静态分析找到目标，再用 GDB 验证
+
 ## GDB 是什么
 
 GDB (GNU Debugger) 是最常用的 Linux 调试器，用于分析程序运行时行为、查找 bug、理解程序流程。
