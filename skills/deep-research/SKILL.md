@@ -31,8 +31,7 @@ allowed-tools:
   - Grep
 
   # Context7 for documentation research
-  - mcp__context7__resolve-library-id
-  - mcp__context7__query-docs
+  - mcp__context7__*
 ---
 
 # Deep Research
@@ -83,6 +82,11 @@ Step 7: Iterative Refinement (optional)
 **Agent A - Domain Landscape Mapper**: Identify key themes, debates, gaps, perspectives, recent developments
 
 **Agent B - Research Question Generator**: Generate 5-7 specific, actionable research questions
+
+**Tool Requirements for Discovery Agents:**
+- **PREFERRED:** Use `mcp__brave-search__brave_web_search` for web searches
+- **PREFERRED:** Use `mcp__fetch__fetch` to fetch webpage content
+- **FALLBACK:** Only use `WebSearch` or `mcp__web_reader__webReader` if MCP tools are unavailable
 
 **Output**: Present findings with specific research angles. Ask user to select or proceed with comprehensive research.
 
@@ -231,25 +235,33 @@ research_output/
 
 ## Tool Usage Strategy
 
+**Tool Priority:** PREFERRED MCP tools → FALLBACK to built-in tools if unavailable
+
 ### Main Orchestrator
 - **Task**: Launch all sub-agents
 - **AskUserQuestion**: Confirm chapter plan, QA results
 - **Write**: Create initial directory structure
 - **Read**: Access all files for coordination
 
-### Chapter Agents (Phase 1)
-- **brave_web_search**: Find sources
-- **webReader/fetch**: Extract and save content
+### Chapter Agents (Phase 1 - Research & Framework)
+- **PREFERRED:** `mcp__brave-search__brave_web_search` for web searches
+- **PREFERRED:** `mcp__fetch__fetch` to extract and save webpage content
+- **PREFERRED:** `mcp__playwright__*` for browser automation if needed
+- **FALLBACK:** `WebSearch` or `mcp__web_reader__webReader` only if MCP tools unavailable
 - **Write**: Save sources, index, framework
 
 ### Framework Review Agents
-- **brave_web_search**: Find additional sources
-- **webReader**: Read saved sources
+- **PREFERRED:** `mcp__brave-search__brave_web_search` for web searches
+- **PREFERRED:** `mcp__fetch__fetch` to read and extract webpage content
+- **PREFERRED:** `mcp__playwright__*` for browser automation if needed
+- **FALLBACK:** `WebSearch` or `mcp__web_reader__webReader` only if MCP tools unavailable
 - **Write/Read/Edit**: Save sources, update index, read framework
 
-### Chapter Agents (Phase 2)
+### Chapter Agents (Phase 2 - Writing)
 - **Read**: Access framework review, saved sources
-- **brave_web_search**: Fill gaps
+- **PREFERRED:** `mcp__brave-search__brave_web_search` to fill gaps
+- **PREFERRED:** `mcp__fetch__fetch` to extract content if needed
+- **FALLBACK:** `WebSearch` or `mcp__web_reader__webReader` only if MCP tools unavailable
 - **Write**: Write complete chapter
 
 ### Synthesis Agent
@@ -260,6 +272,12 @@ research_output/
 ### QA Agents
 - **Read**: All chapters
 - **Write**: Create quality assessment
+
+### Sub-Agent Tool Guidance
+
+All sub-agent prompts in `references/chapter-workflow.md` include tool priority guidance:
+- **PREFERRED:** `mcp__brave-search__*`, `mcp__fetch__*`, `mcp__playwright__*`, `mcp__context7__*`
+- **FALLBACK:** Built-in tools (`WebSearch`, `mcp__web_reader__webReader`) only if MCP tools unavailable
 
 ---
 

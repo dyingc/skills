@@ -21,7 +21,6 @@ allowed-tools:
   - mcp__brave-search__brave_local_search
   - mcp__brave-search__brave_summarizer
   - mcp__fetch__fetch
-  - mcp__web_reader__webReader
 
   # Core tools for research workflow
   - AskUserQuestion
@@ -647,13 +646,16 @@ If language = "Both", present sections in user's preferred language with key ter
 
 ## Tool Usage Strategy
 
+**Tool Priority:** PREFERRED MCP tools → FALLBACK to built-in tools if unavailable
+
 ### Main Agent Tools
 - **Task tool** (primary): Launch sequential sub-agents, passing outputs forward
 - **Write/Edit**: Format research report with proper citations
 
 ### Agent 1: Broad Search Tools
-- **mcp__brave-search__brave_web_search** (heavy): Multiple targeted searches with different keywords
-- **mcp__web_reader__webReader**: Fetch full articles to assess relevance
+- **PREFERRED:** `mcp__brave-search__brave_web_search` (heavy): Multiple targeted searches with different keywords
+- **PREFERRED:** `mcp__fetch__fetch`: Fetch and extract full articles to assess relevance
+- **FALLBACK:** `WebSearch` or `mcp__web_reader__webReader` only if MCP tools unavailable
 - **Goal**: Identify 10-15 high-quality sources
 - **Output**: Source list with URLs, credibility assessment, brief descriptions
 
@@ -666,9 +668,10 @@ If language = "Both", present sections in user's preferred language with key ter
 ```
 
 ### Agent 2: Deep Analysis Tools
-- **mcp__web_reader__webReader** (primary): Read full sources thoroughly
+- **PREFERRED:** `mcp__fetch__fetch` (primary): Fetch and read full sources thoroughly
+- **PREFERRED:** `mcp__brave-search__brave_web_search` (supporting): Look up unfamiliar concepts, find related sources
+- **FALLBACK:** `WebSearch` or `mcp__web_reader__webReader` only if MCP tools unavailable
 - **Read**: Analyze documentation or reference materials
-- **mcp__brave-search__brave_web_search** (supporting): Look up unfamiliar concepts, find related sources
 - **Goal**: Extract key findings, evidence, contradictions
 - **Output**: Detailed findings with quotes, evidence quality assessment
 
@@ -692,7 +695,8 @@ If language = "Both", present sections in user's preferred language with key ter
 - Flag areas needing more research
 
 ### Agent 4: Verification Tools (Optional)
-- **mcp__brave-search__brave_web_search**: Spot-check claims, find additional supporting sources
+- **PREFERRED:** `mcp__brave-search__brave_web_search`: Spot-check claims, find additional supporting sources
+- **FALLBACK:** `WebSearch` only if MCP tools unavailable
 - **Read**: Verify accuracy of synthesized conclusions
 - **Goal**: Validate claims, triangulate sources
 - **Output**: Quality assessment, confidence levels
@@ -709,6 +713,7 @@ If language = "Both", present sections in user's preferred language with key ter
 - **Sources over examples**: Authoritative documentation over blog posts
 - **Attribution over creativity**: Every claim traced to sources
 - **Sequential building**: Each agent extends previous agent's work
+- **MCP tools preferred**: Prefer mcp__brave-search__* and mcp__fetch__* for web operations, fall back to built-in tools if needed
 
 ## Tips
 

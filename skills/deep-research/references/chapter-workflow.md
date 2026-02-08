@@ -22,6 +22,13 @@ agent = Task(
    - Find 8-15 high-quality sources
    - Prioritize: official docs, peer-reviewed papers, recent sources (2024-2025)
 
+   **Tool Usage Priority:**
+   - **PREFERRED:** Use `mcp__brave-search__brave_web_search` for web searches
+   - **PREFERRED:** Use `mcp__fetch__fetch` to fetch and extract webpage content
+   - **PREFERRED:** Use `mcp__playwright__*` tools if browser automation is needed
+   - **PREFERRED:** Use `mcp__context7__*` tools for documentation research
+   - **FALLBACK:** Only use `WebSearch` or `mcp__web_reader__webReader` if MCP tools are unavailable
+
 2. **Save source materials** to `sources/chapter_{i:02d}/`
    For each valuable source:
    - If webpage: Save HTML to `source_XX_webpage.html`
@@ -123,6 +130,12 @@ reviewer = Task(
    - Look for alternative perspectives not included
    - **Save new sources** to `sources/chapter_{i:02d}/source_XX_*`
    - **Update sources_index.md** if new sources added
+
+   **Tool Usage Priority:**
+   - **PREFERRED:** Use `mcp__brave-search__brave_web_search` for web searches
+   - **PREFERRED:** Use `mcp__fetch__fetch` to fetch and extract webpage content
+   - **PREFERRED:** Use `mcp__playwright__*` tools if browser automation is needed
+   - **FALLBACK:** Only use `WebSearch` or `mcp__web_reader__webReader` if MCP tools are unavailable
 
 4. **Evaluate the framework on five dimensions:**
 
@@ -227,6 +240,12 @@ writer = Task(
    - Find sources recommended by reviewer
    - Investigate areas marked for additional research
    - **Save new sources** and update `sources_index.md`
+
+   **Tool Usage Priority:**
+   - **PREFERRED:** Use `mcp__brave-search__brave_web_search` for web searches
+   - **PREFERRED:** Use `mcp__fetch__fetch` to fetch and extract webpage content
+   - **PREFERRED:** Use `mcp__playwright__*` tools if browser automation is needed
+   - **FALLBACK:** Only use `WebSearch` or `mcp__web_reader__webReader` if MCP tools are unavailable
 
 3. **Write the complete chapter** (2000-3000 words)
    - Use the revised framework structure
