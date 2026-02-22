@@ -53,6 +53,8 @@ Deep research v2.0 addresses three challenges through a multi-chapter architectu
 ## Workflow Overview
 
 ```
+Pre-Step: Determine Output Location
+  ↓
 Step 0: Exploratory Discovery (if query vague)
   ↓
 Step 1: Chapter Planning
@@ -70,6 +72,44 @@ Step 7: Iterative Refinement (optional)
 ```
 
 **Total time**: 1-2+ hours (varies by chapter count and depth)
+
+---
+
+## Pre-Step: Determine Output Location
+
+**Action**: Before starting research, ask user where to save the final report.
+
+**Intelligent Recommendations**:
+1. Analyze the research topic to suggest an appropriate directory name
+2. Consider the research purpose (academic, business, technical, personal)
+3. Propose a meaningful, timestamped folder name
+
+**Directory Naming Convention**:
+- Format: `research_YYYY-MM-DD_[topic-slug]`
+- Topic slug: 2-4 words derived from research subject
+- Examples:
+  - "deep research AI agents 2025" → `research_2026-02-22_ai-agents-2025/`
+  - "comprehensive study of microservices patterns" → `research_2026-02-22_microservices-patterns/`
+  - "thorough analysis of Rust memory safety" → `research_2026-02-22_rust-memory-safety/`
+
+**Ask User**:
+```
+Before starting the deep research, I need to know where to save the final report.
+
+Based on your research topic "[topic]", I recommend:
+📁 Suggested directory: [recommended_path]/[suggested_folder_name]/
+
+Options:
+1. Use recommended location
+2. Choose a different directory
+3. Specify custom path
+
+Where would you like the research output to be saved?
+```
+
+**Default behavior**: If user doesn't specify, use `~/Research/[suggested_folder_name]/`
+
+**Store the output path** for all subsequent file operations.
 
 ---
 
@@ -205,10 +245,19 @@ Relaunch N chapter agents simultaneously. Each:
 
 ## File Structure
 
+All files are created under the user-specified output directory (determined in Pre-Step).
+
+**Full path structure**: `[CATEGORY_DIR]/[TOPIC_DIR]/`
+
+Where:
+- `[CATEGORY_DIR]` = User-selected or recommended category directory (e.g., `~/Research/`, `~/Documents/Business/Research/`)
+- `[TOPIC_DIR]` = Date-prefixed topic folder (e.g., `research_2026-02-22_ai-agents/`)
+
 ```
-research_output/
-├── research_report.md              # Main entry point
-├── metadata.json                   # Research metadata
+[CATEGORY_DIR]/                           # e.g., ~/Research/
+└── [TOPIC_DIR]/                          # e.g., research_2026-02-22_ai-agents/
+    ├── research_report.md                # Main entry point
+    ├── metadata.json                     # Research metadata
 ├── planning/
 │   └── chapter_plan.md             # Chapter structure
 ├── chapters/
@@ -238,9 +287,9 @@ research_output/
 **Tool Priority:** PREFERRED MCP tools → FALLBACK to built-in tools if unavailable
 
 ### Main Orchestrator
+- **AskUserQuestion**: (Pre-Step) Ask for output directory, confirm chapter plan, QA results
 - **Task**: Launch all sub-agents
-- **AskUserQuestion**: Confirm chapter plan, QA results
-- **Write**: Create initial directory structure
+- **Write**: Create initial directory structure at user-specified location
 - **Read**: Access all files for coordination
 
 ### Chapter Agents (Phase 1 - Research & Framework)
@@ -294,6 +343,13 @@ All sub-agent prompts in `references/chapter-workflow.md` include tool priority 
 ---
 
 ## Tips
+
+**Output location recommendations:**
+- For academic research: `~/Research/` or `~/Documents/Research/`
+- For business/competitive analysis: `~/Documents/Business/Research/` or project-specific folder
+- For technical learning: `~/Documents/Learning/[topic]/`
+- For personal interest: `~/Documents/Research/` or `~/Desktop/`
+- Default fallback: `~/Research/`
 
 **Quality indicators:**
 - QA score ≥ 4.5/5.0: Excellent, ready for critical decisions
