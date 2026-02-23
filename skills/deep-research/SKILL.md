@@ -69,6 +69,12 @@ Step 5: Synthesis (Edit for coherence)
 Step 6: Final QA (LLM-as-Judge)
   ↓ (if fail)
 Step 7: Iterative Refinement (optional)
+  ↓
+Step 8: Export to PDF with Preserved Links
+  ├─ Create summary.md
+  ├─ Run stitchmd to merge
+  ├─ Convert to PDF with Pandoc
+  └─ Generate links_inventory.md
 ```
 
 **Total time**: 1-2+ hours (varies by chapter count and depth)
@@ -243,6 +249,195 @@ Relaunch N chapter agents simultaneously. Each:
 
 ---
 
+## Step 8: Export to PDF with Preserved Links
+
+**Purpose**: Merge all Markdown files into a single PDF while preserving internal cross-references between chapters.
+
+**Tool Selection**: After research, **stitchmd + Pandoc** was chosen over merge-markdown because:
+- stitchmd specifically rewrites cross-file links like `[Chapter 2](chapter2.md)` to `[Chapter 2](#chapter-2)` based on headings
+- More reliable anchor generation for PDF navigation
+- Simpler workflow with better link preservation
+
+### Step 8.1: Create Summary File
+
+Create a `summary.md` file in the output directory that lists all chapters in order:
+
+```markdown
+# [Research Topic Title]
+
+- [Chapter 1: Title](chapters/01_chapter_final.md)
+- [Chapter 2: Title](chapters/02_chapter_final.md)
+- [Chapter 3: Title](chapters/03_chapter_final.md)
+... (and so on for all chapters)
+```
+
+### Step 8.2: Install Tools (if not already installed)
+
+**macOS**:
+```bash
+# Install stitchmd
+brew install abhinav/tap/stitchmd
+
+# Install pandoc (usually pre-installed)
+brew install pandoc
+
+# Install MacTeX for PDF generation (includes pdflatex)
+# Note: MacTeX is a large package (~4GB), installation takes several minutes
+brew install --cask mactex-no-gui
+
+# Or install BasicTeX (smaller, ~100MB)
+brew install --cask basictex
+# After BasicTeX install, run:
+# eval "$(/usr/libexec/path_helper)"
+```
+
+**Alternative for Linux**:
+```bash
+# Install stitchmd via Go
+go install go.abhg.dev/stitchmd@latest
+
+# Install pandoc and LaTeX
+sudo apt-get install pandoc texlive-full  # Ubuntu/Debian
+```
+
+**Quick test**:
+```bash
+# Check if tools are installed
+which stitchmd
+which pandoc
+which pdflatex
+```
+
+### Step 8.3: Merge Markdown Files
+
+```bash
+# Navigate to research output directory
+cd [output_directory]
+
+# Merge all files using stitchmd
+stitchmd summary.md -o merged.md
+```
+
+**What stitchmd does**:
+- Combines all referenced Markdown files into one
+- Rewrites cross-file links to internal anchors: `[Chapter 2](chapters/02_chapter_final.md)` → `[Chapter 2](#chapter-2)`
+- Preserves relative image paths
+- Generates table of contents
+
+### Step 8.4: Convert to PDF
+
+**Basic PDF conversion**:
+```bash
+# For English content
+pandoc merged.md -o research_report.pdf
+
+# For Chinese content (requires xelatex)
+export PATH="/Library/TeX/texbin:$PATH"  # macOS: add TeX to PATH
+pandoc merged.md -o research_report.pdf \
+  --toc --toc-depth=2 \
+  --pdf-engine=xelatex \
+  -V geometry:margin=1in \
+  -V CJKmainfont="PingFang SC" \
+  -V mainfont="PingFang SC"
+```
+
+**With better formatting options**:
+```bash
+# English
+pandoc merged.md \
+  -o research_report.pdf \
+  --pdf-engine=wkhtmltopdf \
+  --toc \
+  --toc-depth=3 \
+  -V mainfont="Helvetica Neue" \
+  -V sansfont="Helvetica" \
+  -V geometry:margin=1in
+
+# Chinese
+pandoc merged.md \
+  -o research_report.pdf \
+  --toc --toc-depth=2 \
+  --pdf-engine=xelatex \
+  -V geometry:margin=1in \
+  -V CJKmainfont="PingFang SC" \
+  -V mainfont="PingFang SC"
+```
+
+**Note on clickable table of contents**:
+By default, pandoc-generated PDFs may have non-clickable TOC. To enable clickable links, add the `colorlinks` variable:
+
+```bash
+# For clickable TOC (Chinese)
+pandoc merged.md -o research_report.pdf \
+  --toc --toc-depth=2 \
+  --pdf-engine=xelatex \
+  -V geometry:margin=1in \
+  -V CJKmainfont="PingFang SC" \
+  -V mainfont="PingFang SC" \
+  --variable=colorlinks:true \
+  --variable=linkcolor:blue \
+  --variable=urlcolor:blue
+
+# For clickable TOC (English)
+pandoc merged.md -o research_report.pdf \
+  --toc --toc-depth=3 \
+  --variable=colorlinks:true
+```
+
+**Alternative: HTML version** (fully clickable, no font rendering issues):
+```bash
+pandoc merged.md -o research_report.html \
+  --toc --toc-depth=2 \
+  --standalone --self-contained
+```
+
+**Note on emoji/special characters**:
+Some Unicode characters (✅, ❌, ⚠️) may not render properly in PDF. Consider:
+- Replacing with text equivalents ([OK], [X], [WARNING])
+- Using HTML version for full compatibility
+- Filtering emoji before PDF conversion
+
+### Step 8.5: Generate Links Inventory
+
+Create a separate file documenting all internal links in the final PDF:
+
+**File**: `links_inventory.md`
+
+```markdown
+# Links Inventory
+
+This document lists all internal links in the final PDF for reference.
+
+## Chapter Cross-References
+
+| Source | Target | Description |
+|--------|--------|-------------|
+| [Chapter 1](#chapter-1-title) | Chapter 1 | Link to Chapter 1 |
+| [Chapter 2](#chapter-2-title) | Chapter 2 | Link to Chapter 2 |
+| ... | ... | ... |
+
+## External Links (from sources)
+
+| URL | Description |
+|-----|-------------|
+| https://example.com | Source 1 |
+| https://another.com | Source 2 |
+```
+
+**How to generate**:
+1. Extract all links from `merged.md` using grep/awk
+2. Categorize into internal (anchors) vs external (http/https)
+3. Create the inventory markdown table
+
+### Step 8.6: Verify Links
+
+Test that internal links work correctly in the PDF:
+- Open the generated PDF
+- Click on each internal link
+- Verify they navigate to the correct section
+
+---
+
 ## File Structure
 
 All files are created under the user-specified output directory (determined in Pre-Step).
@@ -257,25 +452,29 @@ Where:
 [CATEGORY_DIR]/                           # e.g., ~/Research/
 └── [TOPIC_DIR]/                          # e.g., research_2026-02-22_ai-agents/
     ├── research_report.md                # Main entry point
-    ├── metadata.json                     # Research metadata
+    ├── research_report.pdf              # PDF export with preserved links
+    ├── merged.md                        # Stitched markdown (from stitchmd)
+    ├── summary.md                       # Summary file for stitchmd
+    ├── links_inventory.md               # All links documentation
+    ├── metadata.json                    # Research metadata
 ├── planning/
-│   └── chapter_plan.md             # Chapter structure
+│   └── chapter_plan.md                  # Chapter structure
 ├── chapters/
-│   ├── NN_framework_draft.md       # Original framework
-│   ├── NN_framework_review.md      # Reviewed framework
-│   └── NN_chapter_final.md         # Complete chapter
-├── sources/                        # All source materials
+│   ├── NN_framework_draft.md            # Original framework
+│   ├── NN_framework_review.md           # Reviewed framework
+│   └── NN_chapter_final.md              # Complete chapter
+├── sources/                             # All source materials
 │   ├── chapter_NN/
-│   │   ├── source_XX_*             # Saved source files
-│   │   └── sources_index.md        # Chapter source list
+│   │   ├── source_XX_*
+│   │   └── sources_index.md
 │   └── complete_sources_inventory.md
 ├── synthesis/
 │   ├── executive_summary_content.md
 │   ├── conclusions_content.md
 │   └── navigation_content.md
 └── final_qa/
-    ├── quality_assessment.md       # QA scores and findings
-    └── refinement_log.md           # If refinement occurred
+    ├── quality_assessment.md            # QA scores and findings
+    └── refinement_log.md                # If refinement occurred
 ```
 
 **For detailed format specifications**, see `references/formats.md`
