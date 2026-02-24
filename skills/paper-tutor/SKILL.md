@@ -21,6 +21,9 @@ allowed-tools:
   # PDF processing
   - pdf  # For extracting paper content from PDF files
 
+  # Script execution
+  - Bash  # For running extract_figures.py script
+
   # Core tools for agent orchestration and file management
   - AskUserQuestion
   - Task
@@ -52,6 +55,8 @@ Paper Tutor uses a **swarm of specialized agents** to transform complex academic
 Pre-Step: Determine Output Location
   ↓
 Step 0: Paper Structure Extraction
+  ↓
+Step 0.5: Figure Extraction (REQUIRED)
   ↓
 Step 1: Initialize Shared Working Memory
   ↓
@@ -100,6 +105,50 @@ Step 4: Generate Final Output
 - References
 
 **Output**: `paper_metadata.json` with structure map
+
+---
+
+## Step 0.5: Figure Extraction
+
+**Action**: Extract all figures from the PDF for later reference.
+
+**IMPORTANT**: This step is REQUIRED for proper figure handling. Without it, chapter agents will not have access to paper figures.
+
+**How to extract figures**:
+
+### Method 1: Using the provided Python script (Recommended)
+
+This method extracts **both bitmap images AND vector graphics** (diagrams, flowcharts, architecture figures).
+
+```bash
+python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]/figures/
+
+# Example
+python ~/.claude/skills/paper-tutor/scripts/extract_figures.py paper.pdf -o ./figures/
+```
+
+**Requirements**:
+```bash
+pip install pymupdf Pillow imagehash
+```
+
+### Method 2: Using pdfimages (Bitmap only)
+
+If you only need embedded bitmap images (photos, plots, etc.):
+
+```bash
+# Requires poppler-utils
+# macOS: brew install poppler
+pdfimages -all [PDF_PATH] [OUTPUT_DIR]/figures/fig
+```
+
+**Limitation**: `pdfimages` cannot extract vector graphics (diagrams, flowcharts, etc.)
+
+**Output**:
+- `[OUTPUT_DIR]/figures/` directory containing all extracted figures
+- Files named: `fig_[page]_[index]_[hash].png` (Python script) or `fig-000.png` (pdfimages)
+
+**For detailed extraction logic**, see [references/figure-extraction.md](references/figure-extraction.md)
 
 ---
 
@@ -302,6 +351,10 @@ graph TD
 ├── paper_explanation.md              # Main output
 ├── paper_metadata.json               # Extracted structure
 ├── shared_memory.json                # Final shared memory state
+├── figures/                          # Extracted paper figures (REQUIRED)
+│   ├── fig_0_1_abc123.png           # Bitmap images
+│   ├── vector_3_0_def456.png        # Vector graphics rendered to PNG
+│   └── ...
 ├── chapters/                         # Individual agent outputs
 │   ├── chapter_01_agent_output.md
 │   ├── chapter_02_agent_output.md
@@ -319,7 +372,12 @@ graph TD
 - **AskUserQuestion**: Get paper source, intensity level, output location
 - **Task**: Launch all sub-agents
 - **Write**: Create directory structure, initialize shared memory
+- **Bash**: Run `extract_figures.py` script to extract figures from PDF
 - **pdf**: Extract paper content from PDF
+
+### Figure Extraction (Step 0.5)
+- **Bash**: `python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF] -o [OUTPUT]/figures/`
+- **pdf**: Alternative method to extract images from PDF
 
 ### Chapter Agents
 - **Read**: Access shared memory, their assigned chapter
@@ -340,6 +398,7 @@ graph TD
 - **Shared memory schema**: [references/shared-memory-schema.md](references/shared-memory-schema.md) - Complete structure
 - **Chapter agent workflow**: [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md) - Detailed prompts
 - **Formula explanation template**: [references/formula-template.md](references/formula-template.md) - How to explain equations
+- **Figure extraction guide**: [references/figure-extraction.md](references/figure-extraction.md) - How to extract figures from PDF
 - **Figure handling guide**: [references/figure-guide.md](references/figure-guide.md) - Mermaid vs original figures
 
 ---

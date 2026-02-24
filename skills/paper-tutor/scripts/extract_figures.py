@@ -177,7 +177,17 @@ class FigureExtractor:
             # 2. Extract vector graphics
             try:
                 # Try cluster_drawings first (newer PyMuPDF versions)
-                clusters = page.cluster_drawings()
+                # Returns list of pymupdf.Rect objects
+                raw_clusters = page.cluster_drawings()
+                # Convert Rect objects to dict format for consistent handling
+                clusters = []
+                for c in raw_clusters:
+                    if c is not None:
+                        # pymupdf.Rect has x0, y0, x1, y1 attributes
+                        clusters.append({
+                            "rect": c,
+                            "items": []  # No items info from cluster_drawings
+                        })
             except AttributeError:
                 # Fallback to get_drawings for older versions
                 clusters = [{"rect": d["rect"], "items": d.get("items", [])}
@@ -186,8 +196,17 @@ class FigureExtractor:
             for cluster_idx, cluster in enumerate(clusters):
                 rect = cluster["rect"]
 
+                # Ensure rect is a proper Rect object or has width/height attributes
+                if hasattr(rect, 'width'):
+                    rect_width = rect.width
+                    rect_height = rect.height
+                else:
+                    # Assume it's a tuple or list (x0, y0, x1, y1)
+                    rect_width = rect[2] - rect[0]
+                    rect_height = rect[3] - rect[1]
+
                 # Size filtering
-                if rect.width < self.min_width or rect.height < self.min_height:
+                if rect_width < self.min_width or rect_height < self.min_height:
                     continue
 
                 # Check if it's a diagram
