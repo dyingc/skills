@@ -266,20 +266,109 @@ for query in search_queries:
             })
 ```
 
-### Step 9: 更新共享内存
+### Step 9: 更新共享内存（关键步骤）
 
-完成讲解后，更新共享内存：
+**这是必须完成的步骤，不是可选的。**
 
-```python
-update_shared_memory({
-    "type": "complete_chapter",
-    "chapter_id": my_chapter_id,
-    "concepts_explained": [list of concepts],
-    "terms_defined": [list of terms],
-    "word_count": actual_word_count,
-    "status": "completed"
-})
+完成讲解后，**必须使用 Edit 或 Write 工具**更新 `{OUTPUT_DIR}/shared_memory.json`：
+
+#### 9.1 更新 concept_coverage_map
+
+注册你讲解的所有概念：
+
+```json
+{
+  "concept_coverage_map": {
+    "Self-Attention": {
+      "explainer": "agent_2",
+      "section": "Model Architecture",
+      "brief": "让序列中每个位置都能关注到其他所有位置的注意力机制"
+    },
+    "Multi-Head Attention": {
+      "explainer": "agent_2",
+      "section": "Model Architecture",
+      "brief": "并行运行多个注意力头，捕获不同类型的依赖关系"
+    }
+  }
+}
 ```
+
+#### 9.2 更新 terminology_registry
+
+定义你引入的术语：
+
+```json
+{
+  "terminology_registry": {
+    "d_model": {
+      "definition": "模型的隐藏维度，Transformer 中默认为 512",
+      "section": "Model Architecture",
+      "defined_by": "agent_2"
+    },
+    "d_k": {
+      "definition": "每个注意力头的维度，d_model / h = 512 / 8 = 64",
+      "section": "Model Architecture",
+      "defined_by": "agent_2"
+    }
+  }
+}
+```
+
+#### 9.3 更新 external_resources（如果有）
+
+注册你找到的外部资源：
+
+```json
+{
+  "external_resources": [
+    {
+      "url": "https://jalammar.github.io/illustrated-transformer/",
+      "title": "The Illustrated Transformer",
+      "related_concepts": ["Transformer", "Self-Attention", "Multi-Head Attention"],
+      "found_by": "agent_2"
+    }
+  ]
+}
+```
+
+#### 9.4 更新 progress
+
+标记你的任务为完成：
+
+```json
+{
+  "progress": {
+    "agent_2_model_architecture": "completed"
+  }
+}
+```
+
+#### 9.5 完整示例
+
+使用 Edit 工具更新 shared_memory.json：
+
+```
+将以下内容合并到 shared_memory.json 中：
+
+{
+  "concept_coverage_map": {
+    "Self-Attention": {...},
+    "Multi-Head Attention": {...}
+  },
+  "terminology_registry": {
+    "d_model": {...},
+    "d_k": {...}
+  },
+  "progress": {
+    "agent_2_model_architecture": "completed"
+  }
+}
+```
+
+**注意**：
+- 使用 Edit 工具时，要确保 old_string 是唯一的，避免误改其他内容
+- 如果需要大规模更新，可以先用 Read 读取当前内容，然后用 Write 完整覆盖
+- 更新前检查是否有其他 agent 已经注册了相同的概念或术语
 
 ---
 
@@ -293,10 +382,13 @@ update_shared_memory({
 - [ ] 是否包含了可视化（Mermaid 图）？
 - [ ] 公式是否逐符号解释了？
 - [ ] 图表是否"教会"读者如何阅读，而不只是描述？
-- [ ] 术语是否已注册到共享内存？
+- [ ] **是否更新了 shared_memory.json 的 concept_coverage_map？**
+- [ ] **是否更新了 shared_memory.json 的 terminology_registry？**
+- [ ] **是否更新了 shared_memory.json 的 progress 状态为 completed？**
 - [ ] 是否检查了概念覆盖，避免重复讲解？
 - [ ] 是否使用了外部资源来增强理解？
 - [ ] 与其他章节的关联是否清晰？
+- [ ] 讲解内容是否已写入 `{OUTPUT_DIR}/chapters/chapter_XX_output.md`？
 
 ---
 

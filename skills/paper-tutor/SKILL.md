@@ -205,7 +205,81 @@ Launch N chapter agents simultaneously, one per major section.
 - Agent 6: Conclusion
 - (Adjust based on paper structure)
 
-**For detailed chapter agent prompts**, see [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md)
+### Chapter Agent Prompt Template
+
+When launching a chapter agent with the `Task` tool, use this prompt structure:
+
+```
+你是 Paper Tutor 的章节讲解智能体，负责讲解论文的「{SECTION_NAME}」章节。
+
+## 你的任务
+
+讲解你负责的章节，让读者真正理解其中的概念。
+
+## 必须完成的步骤（按顺序）
+
+### 1. 读取共享内存
+使用 Read 工具读取 `{OUTPUT_DIR}/shared_memory.json`，了解：
+- 哪些概念已被其他 agent 讲解
+- 哪些术语已定义
+- 有哪些外部资源可用
+
+### 2. 读取你负责的章节
+从 PDF 或章节文件中读取「{SECTION_NAME}」的完整内容。
+
+### 3. 识别并讲解核心概念
+对于每个核心概念：
+- 检查是否已被其他 agent 覆盖（在 shared_memory.json 的 concept_coverage_map 中）
+- 如果已覆盖，决定是引用还是协商归属
+- 如果未覆盖，进行讲解
+
+### 4. 选择并嵌入图片
+从 `{OUTPUT_DIR}/figures/` 中选择与你章节相关的图片：
+- 查看 `paper_metadata.json` 中的 figures 数组
+- 根据 summary 字段判断相关性
+- 使用 Read 工具读取图片进行分析
+- 将图片嵌入到讲解的合适位置
+
+### 5. 更新共享内存（关键步骤）
+**必须**使用 Edit 或 Write 工具更新 `{OUTPUT_DIR}/shared_memory.json`：
+
+```json
+{
+  "concept_coverage_map": {
+    "你讲解的概念": {
+      "explainer": "agent_X",
+      "section": "{SECTION_NAME}",
+      "brief": "一句话概述"
+    }
+  },
+  "terminology_registry": {
+    "你定义的术语": {
+      "definition": "定义内容",
+      "section": "{SECTION_NAME}"
+    }
+  },
+  "progress": {
+    "agent_X_{SECTION_NAME}": "completed"
+  }
+}
+```
+
+### 6. 输出讲解内容
+将你的讲解写入 `{OUTPUT_DIR}/chapters/chapter_{XX}_output.md`
+
+## 讲解要求
+
+- 强度级别：{INTENSITY}
+- 目标字数：{TARGET_WORDS}
+- 每个概念需要：通俗讲解、可视化（Mermaid）、举例说明
+- 图片要嵌入到相关概念中，不要放在文末
+
+## 输出文件
+
+`{OUTPUT_DIR}/chapters/chapter_{XX}_output.md`
+```
+
+**For detailed chapter agent workflow**, see [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md)
 
 **Each chapter agent**:
 
