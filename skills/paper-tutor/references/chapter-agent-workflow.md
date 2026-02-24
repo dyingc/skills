@@ -111,11 +111,101 @@ for concept in my_concepts:
 
 **参见** [formula-template.md](formula-template.md)
 
-### Step 6: 处理图表
+### Step 6: 选择并嵌入图片
 
-对每个图表，按照详细模板讲解。
+**核心原则：图片是讲解的一部分，不是附录。**
 
-**参见** [figure-guide.md](figure-guide.md)
+#### 6.1 查找相关图片
+
+从 `paper_metadata.json` 的 `figures` 数组中，根据 `summary` 判断哪些图片与你的章节相关：
+
+```python
+# 读取图片元数据
+figures = memory["paper"]["metadata"]["figures"]
+
+# 根据你讲解的概念筛选
+relevant_figures = []
+for concept in my_concepts:
+    for fig in figures:
+        if is_relevant(fig["summary"], concept):
+            relevant_figures.append(fig)
+```
+
+#### 6.2 Level 2 深度分析（按需）
+
+**当确定使用某张图片时，必须先读取并分析**：
+
+```python
+# 读取图片
+img = read_figure(fig["file"])
+
+# 根据当前讲解上下文生成分析
+analysis = analyze_figure(img, context={
+    "section": my_section,
+    "concept": current_concept,
+    "purpose": "extract insights for explanation"
+})
+
+# 分析结果用于丰富讲解
+insights = analysis["insights"]
+examples = analysis["examples"]
+```
+
+**分析 Prompt 模板**：
+
+```
+我正在讲解论文的「{section_title}」章节，核心概念是「{concept}」。
+
+请分析这张图片，帮助我丰富讲解内容：
+
+1. 这张图中有哪些视觉元素直接展示了 {concept}？
+2. 有哪些细节是读者可能忽略但很重要的？
+3. 图中的数据/结构揭示了什么洞察？
+4. 有什么可以用来举例或类比的地方？
+```
+
+#### 6.3 嵌入到讲解中
+
+**在讲解概念时，将图片和解读放在合适的位置**：
+
+```markdown
+#### 概念：Multi-Head Attention
+
+**原文定义**：[引用原文]
+
+**通俗讲解**：
+[文字讲解...]
+
+**图解**：
+![Multi-Head Attention](figures/fig_3_1_attention.png)
+
+这张图展示了多头注意力的并行结构。注意几个关键点：
+- 8 个头并行计算，每个头维度是 64（不是 512）
+- 拼接后通过 W^O 投影回原始维度
+- 这就像用 8 只"眼睛"同时看不同的东西...
+
+**为什么要多头？**
+[继续讲解...]
+```
+
+#### 6.4 图片放置规则
+
+- **架构图** → 放在"模型架构"或"方法"章节
+- **注意力可视化** → 放在讲解注意力机制的地方
+- **结果表格** → 放在"实验结果"章节
+- **对比图** → 放在讲解"为什么 X 更好"的地方
+
+**错误做法**：
+- ❌ 所有图片放在附录
+- ❌ 只在文末列出图片链接
+- ❌ 图片和讲解内容分离
+
+**正确做法**：
+- ✅ 图片嵌入到相关概念讲解中
+- ✅ 每张图片有针对性的解读
+- ✅ 从图片中提取洞察来丰富文字讲解
+
+**参见** [figure-guide.md](figure-guide.md) 了解更多图表处理细节
 
 ### Step 7: 定义术语
 

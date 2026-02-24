@@ -108,17 +108,23 @@ Step 4: Generate Final Output
 
 ---
 
-## Step 0.5: Figure Extraction
+## Step 0.5: Figure Extraction (REQUIRED)
 
-**Action**: Extract all figures from the PDF for later reference.
+**Action**: Extract all figures from the PDF and generate Level 1 summaries for agent selection.
 
-**IMPORTANT**: This step is REQUIRED for proper figure handling. Without it, chapter agents will not have access to paper figures.
+**IMPORTANT**: This step is REQUIRED. Chapter agents rely on figure summaries to decide which images to use.
+
+**Two-Level Figure Description System**:
+
+1. **Level 1 - Summary (generated now)**: Concise 1-2 sentence description stored in `paper_metadata.json`. Purpose: Help agents quickly identify which figure is relevant for their section.
+
+2. **Level 2 - Deep Analysis (generated on-demand)**: When an agent decides to use a figure, it performs contextual analysis based on the current explanation needs. Purpose: Extract insights to enrich the explanation.
 
 **How to extract figures**:
 
-### Method 1: Using the provided Python script (Recommended)
+### Step 0.5.1: Extract Images
 
-This method extracts **both bitmap images AND vector graphics** (diagrams, flowcharts, architecture figures).
+Use the provided Python script (extracts both bitmap AND vector graphics):
 
 ```bash
 python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]/figures/
@@ -132,23 +138,41 @@ python ~/.claude/skills/paper-tutor/scripts/extract_figures.py paper.pdf -o ./fi
 pip install pymupdf Pillow imagehash
 ```
 
-### Method 2: Using pdfimages (Bitmap only)
+**Output**: `[OUTPUT_DIR]/figures/` directory with files named:
+- `fig_[page]_[index]_[hash].png` - Bitmap images
+- `vector_[page]_[index]_[hash].png` - Rendered vector graphics
 
-If you only need embedded bitmap images (photos, plots, etc.):
+### Step 0.5.2: Generate Level 1 Summaries (CRITICAL)
 
-```bash
-# Requires poppler-utils
-# macOS: brew install poppler
-pdfimages -all [PDF_PATH] [OUTPUT_DIR]/figures/fig
+After extraction, you MUST analyze each figure and generate summaries:
+
+1. **Read each extracted figure** using the `Read` tool
+2. **Generate a concise summary** (1-2 sentences) describing:
+   - What type of figure (architecture diagram, results table, comparison chart, etc.)
+   - Main subject/topic shown
+   - Key visual elements
+
+3. **Store in paper_metadata.json**:
+
+```json
+{
+  "figures": [
+    {
+      "file": "fig_3_0_abc123.png",
+      "page": 3,
+      "summary": "The Transformer architecture diagram showing encoder-decoder structure with multi-head attention, feed-forward networks, and positional encodings"
+    }
+  ]
+}
 ```
 
-**Limitation**: `pdfimages` cannot extract vector graphics (diagrams, flowcharts, etc.)
+**Critical Rules**:
+- **Analyze EVERY extracted figure** - no exceptions
+- **Summaries must be accurate** - agents rely on them for selection
+- **If a figure cannot be analyzed** (corrupted, unreadable), **skip it entirely** - do not include in metadata
+- **Be specific** - "architecture diagram" is better than "diagram"
 
-**Output**:
-- `[OUTPUT_DIR]/figures/` directory containing all extracted figures
-- Files named: `fig_[page]_[index]_[hash].png` (Python script) or `fig-000.png` (pdfimages)
-
-**For detailed extraction logic**, see [references/figure-extraction.md](references/figure-extraction.md)
+**Why this matters**: Agents choose figures based on these summaries. Wrong summaries lead to wrong figure selection, which produces confusing explanations.
 
 ---
 
@@ -293,6 +317,11 @@ After all agents complete, generate the final organized explanation.
 **通俗讲解**：
 [详细讲解，1000-3000字，视强度而定]
 
+**图解**：
+![相关图片](figures/fig_xxx.png)
+
+[从图片中提取的洞察，帮助理解概念]
+
 **可视化理解**：
 ```mermaid
 graph TD
@@ -302,25 +331,11 @@ graph TD
 **举例说明**：
 [具体例子]
 
-### 📊 本章图表讲解
-
-#### 图1：[原标题]
-**图意**：这张图想要表达的是...
-
-**如何阅读**：
-1. 首先看X轴代表...
-2. Y轴表示...
-
-**简化示意图**：
-```mermaid
-...
-```
-
 ---
 
 ## 第二章：方法
 
-[Agent 2 的讲解内容]
+[Agent 2 的讲解内容，包含嵌入的图片和解读]
 
 ---
 
@@ -335,10 +350,9 @@ graph TD
 
 ### B. 外部资源推荐
 - 教程、博客、视频链接
-
-### C. 可视化索引
-- 所有 Mermaid 图的汇总
 ```
+
+**重要**：图片应该嵌入到相关概念讲解中，而不是放在附录或单独的"图表讲解"小节。每张图片都应该有针对性的解读，帮助读者获得洞察。
 
 **Output file**: `paper_explanation.md`
 
