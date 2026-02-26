@@ -47,7 +47,9 @@ Paper Tutor uses a **swarm of specialized agents** to transform complex academic
 ## Workflow Overview
 
 ```
-Pre-Step: Determine Output Location
+Pre-Step A: Dependency Check
+  ↓
+Pre-Step B: Determine Output Location
   ↓
 Step 0: Paper Structure Extraction
   ↓
@@ -80,13 +82,43 @@ Step 7: Validation (Run validate_execution.py)
 
 ---
 
-## Pre-Step: Determine Output Location
+## Pre-Step A: Dependency Check
+
+**Action**: Check Python package prerequisites before running any scripts.
+
+```bash
+python ~/.claude/skills/paper-tutor/scripts/check_dependencies.py
+```
+
+If dependencies are missing:
+
+1. Ask user permission before any installation.
+2. If user approves, run:
+
+```bash
+python -m pip install -r ~/.claude/skills/paper-tutor/scripts/requirements.txt
+```
+
+3. Re-run `check_dependencies.py` and continue only when all checks pass.
+
+If user declines installation, continue with a degraded path:
+- Skip figure extraction (`Step 2.1`)
+- Set `image_analysis.status = "unavailable"`
+- Continue chapter teaching with text-only explanations
+
+---
+
+## Pre-Step B: Determine Output Location
 
 **Action**: Ask user where to save the paper explanation.
 
-**Recommended format**: `paper_tutor_YYYY-MM-DD_[paper-slug]/`
+**Default base directory**: `~/Documents/Research/`
 
-**Example**: "Attention Is All You Need" → `paper_tutor_2026-02-25_attention-is-all-you-need/`
+**Recommended format**: `~/Documents/Research/paper_tutor_YYYY-MM-DD_[paper-slug]/`
+
+**If user does not specify a location**: use the default base directory and create a folder with the recommended format.
+
+**Example**: "Attention Is All You Need" → `~/Documents/Research/paper_tutor_2026-02-24_attention-is-all-you-need/`
 
 ---
 
@@ -162,6 +194,8 @@ For each chapter:
 ## Step 2: Figure Extraction & Analysis (by Figure Analyst)
 
 ### Step 2.1: Extract Images
+
+**Prerequisite**: Pre-Step A dependency check passed.
 
 ```bash
 python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]/figures/
@@ -586,7 +620,7 @@ Overall Status: ✅ PASSED / ❌ FAILED
 - AskUserQuestion: Get paper source, intensity, output location
 - Task: Launch Figure Analyst, Chapter Agents, Editor-in-Chief
 - Write: Create directory structure, initialize files
-- Bash: Run extract_figures.py, validate_execution.py
+- Bash: Run check_dependencies.py, extract_figures.py, validate_execution.py
 
 ### Figure Analyst
 - Read: View extracted figures (multimodal)
@@ -623,6 +657,7 @@ Overall Status: ✅ PASSED / ❌ FAILED
 - Figures are "taught" not just described
 
 **Common pitfalls to avoid**:
+- Skipping dependency check before running scripts
 - Skipping Figure Analyst and writing figure descriptions yourself
 - Not waiting for Editor-in-Chief approval
 - Not running validation script
