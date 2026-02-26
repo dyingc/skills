@@ -1,6 +1,7 @@
 ---
 name: angr-binary-analysis
-description: Automated binary analysis and symbolic execution using angr framework. Use this skill when the user asks to: (1) Solve CTF challenges or find correct inputs automatically, (2) Generate symbolic execution scripts for binaries, (3) Perform automated constraint solving or path finding, (4) Analyze taint analysis on controlled data, (5) Hook functions and simulate library calls, (6) Create automated solutions for binary exploitation challenges. This skill integrates static analysis tools with angr to automatically understand binary structure and generate solving strategies.
+description: >
+  Automated binary analysis and symbolic execution using angr framework. Use this skill when the user asks to: (1) Solve CTF challenges or find correct inputs automatically, (2) Generate symbolic execution scripts for binaries, (3) Perform automated constraint solving or path finding, (4) Analyze taint analysis on controlled data, (5) Hook functions and simulate library calls, (6) Create automated solutions for binary exploitation challenges. This skill integrates static analysis tools with angr to automatically understand binary structure and generate solving strategies.
 ---
 
 # angr Binary Analysis

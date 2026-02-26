@@ -1,18 +1,7 @@
 ---
 name: paper-tutor
 description: >
-  Multi-agent swarm system for deep paper understanding and explanation. Use when users request: "explain this paper", "help me understand this paper", "teach me about this paper's X concept", "deep dive into this paper", "walk me through this paper chapter by chapter".
-
-  Architecture: Chapter-Based Parallel Explanation with Agent Swarm Communication.
-  - Coordinator parses paper structure and assigns chapter agents
-  - Chapter agents explain their assigned sections in parallel with shared working memory
-  - Editor-in-Chief arbitrates terminology disputes and concept ownership
-  - Agents communicate through shared memory (concept coverage map, terminology registry, external resources)
-  - Each chapter includes: detailed concept explanation, formula breakdown, Mermaid visualizations, prerequisite knowledge boxes, external resource integration
-
-  Key difference from summary: This skill TEACHES rather than summarizes. Each concept is explained with prerequisites, examples, visualizations, and connections to other chapters.
-
-  Intensity levels: Light (~5K words), Medium (~30K words), Heavy (~100K words with extensive external resources).
+  Multi-agent paper teaching workflow for deep understanding (not brief summarization). Use when users ask to explain a paper, learn a paper step by step, understand a paper concept in depth, or do a chapter-by-chapter walkthrough. Works for PDF/ArXiv/URL inputs and produces structured teaching outputs with concept explanations, equation breakdowns, figure interpretation, prerequisite notes, and Mermaid diagrams. Uses chapter-parallel agents plus a figure analyst and editor review gate to ensure consistency and quality. Supports Light (~5K), Medium (~30K), and Heavy (~100K) output intensity based on requested depth.
 allowed-tools:
   # MCP Search and Fetch Tools (for external resource integration)
   - mcp__brave-search__*
@@ -22,7 +11,7 @@ allowed-tools:
   - pdf  # For extracting paper content from PDF files
 
   # Script execution
-  - Bash  # For running extract_figures.py script
+  - Bash  # For running extract_figures.py and validate_execution.py scripts
 
   # Core tools for agent orchestration and file management
   - AskUserQuestion
@@ -45,9 +34,15 @@ Paper Tutor uses a **swarm of specialized agents** to transform complex academic
 
 1. **Teaching, not summarizing**: Each concept is explained with prerequisites, examples, visualizations, and context
 2. **Swarm communication**: Chapter agents coordinate through shared working memory to avoid redundancy and ensure coherence
-3. **Arbitration by Editor-in-Chief**: Separate role from coordinator; handles terminology disputes and concept ownership
-4. **External resource integration**: Agents search for tutorials, blog posts, and lectures to enhance explanations
+3. **Specialized roles with clear boundaries**:
+   - **Coordinator**: Task assignment, progress tracking
+   - **Figure Analyst**: ONLY agent allowed to write figure analysis (enforced by signature)
+   - **Chapter Agents**: Explain concepts, update shared memory (CANNOT write figure analysis)
+   - **Editor-in-Chief**: Reviews all chapter outputs, must approve with score >= 4.0
+4. **Structural enforcement**: Constraints are enforced through data signatures, not rules
 5. **Multi-modal explanation**: Text + Mermaid diagrams + formula breakdowns + prerequisite knowledge boxes
+
+---
 
 ## Workflow Overview
 
@@ -56,24 +51,32 @@ Pre-Step: Determine Output Location
   ↓
 Step 0: Paper Structure Extraction
   ↓
-Step 0.5: Figure Extraction (REQUIRED)
-  ↓
 Step 1: Initialize Shared Working Memory
   ↓
-Step 2: Launch Chapter Agents (Parallel)
+Step 2: Figure Extraction & Analysis (by Figure Analyst Agent)
   ↓
-Step 3: Agent Coordination (Concept Arbitration, Terminology)
+Step 3: Launch Chapter Agents (Parallel)
   ↓
-Step 4: Generate Final Output
+Step 4: Editor-in-Chief Review (Each chapter must pass with score >= 4.0)
+  ↓
+Step 5: Agent Coordination (Concept Arbitration, Terminology)
+  ↓
+Step 6: Generate Final Output
+  ↓
+Step 7: Validation (Run validate_execution.py)
 ```
+
+---
 
 ## Intensity Levels
 
-| Level | Total Words | Per Concept | External Resources | Agent Count |
-|-------|-------------|-------------|-------------------|-------------|
-| **Light** | ~5,000 | 200-500 | Minimal (only when critical) | 2-3 |
-| **Medium** | ~30,000 | 1,000-3,000 | Curated recommendations | 4-6 |
-| **Heavy** | ~100,000 | 5,000-20,000 | Integrated into explanations | Per-chapter |
+| Level | Total Words | Chapter Agents | Per Concept | External Resources |
+|-------|-------------|----------------|-------------|-------------------|
+| **Light** | ~5,000 | 2 | 200-500 | Minimal (only when critical) |
+| **Medium** | ~30,000 | 4-6 | 1,000-3,000 | Curated recommendations |
+| **Heavy** | ~100,000 | Per-chapter | 5,000-20,000 | Integrated into explanations |
+
+**Note**: Architecture is the same for all levels. Only agent count and depth vary.
 
 ---
 
@@ -83,7 +86,7 @@ Step 4: Generate Final Output
 
 **Recommended format**: `paper_tutor_YYYY-MM-DD_[paper-slug]/`
 
-**Example**: "Attention Is All You Need" → `paper_tutor_2026-02-22_attention-is-all-you-need/`
+**Example**: "Attention Is All You Need" → `paper_tutor_2026-02-25_attention-is-all-you-need/`
 
 ---
 
@@ -100,114 +103,154 @@ Step 4: Generate Final Output
 **Extract**:
 - Title, authors, year
 - Chapter/section hierarchy
-- All figures and tables
+- All figures and tables (locations only, not analyzed yet)
 - All equations (LaTeX)
 - References
 
-**Output**: `paper_metadata.json` with structure map
-
----
-
-## Step 0.5: Figure Extraction (REQUIRED)
-
-**Action**: Extract all figures from the PDF and generate Level 1 summaries for agent selection.
-
-**IMPORTANT**: This step is REQUIRED. Chapter agents rely on figure summaries to decide which images to use.
-
-**Two-Level Figure Description System**:
-
-1. **Level 1 - Summary (generated now)**: Concise 1-2 sentence description stored in `paper_metadata.json`. Purpose: Help agents quickly identify which figure is relevant for their section.
-
-2. **Level 2 - Deep Analysis (generated on-demand)**: When an agent decides to use a figure, it performs contextual analysis based on the current explanation needs. Purpose: Extract insights to enrich the explanation.
-
-**How to extract figures**:
-
-### Step 0.5.1: Extract Images
-
-Use the provided Python script (extracts both bitmap AND vector graphics):
-
-```bash
-python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]/figures/
-
-# Example
-python ~/.claude/skills/paper-tutor/scripts/extract_figures.py paper.pdf -o ./figures/
-```
-
-**Requirements**:
-```bash
-pip install pymupdf Pillow imagehash
-```
-
-**Output**: `[OUTPUT_DIR]/figures/` directory with files named:
-- `fig_[page]_[index]_[hash].png` - Bitmap images
-- `vector_[page]_[index]_[hash].png` - Rendered vector graphics
-
-### Step 0.5.2: Generate Level 1 Summaries (CRITICAL)
-
-After extraction, you MUST analyze each figure and generate summaries:
-
-1. **Read each extracted figure** using the `Read` tool
-2. **Generate a concise summary** (1-2 sentences) describing:
-   - What type of figure (architecture diagram, results table, comparison chart, etc.)
-   - Main subject/topic shown
-   - Key visual elements
-
-3. **Store in paper_metadata.json**:
-
-```json
-{
-  "figures": [
-    {
-      "file": "fig_3_0_abc123.png",
-      "page": 3,
-      "summary": "The Transformer architecture diagram showing encoder-decoder structure with multi-head attention, feed-forward networks, and positional encodings"
-    }
-  ]
-}
-```
-
-**Critical Rules**:
-- **Analyze EVERY extracted figure** - no exceptions
-- **Summaries must be accurate** - agents rely on them for selection
-- **If a figure cannot be analyzed** (corrupted, unreadable), **skip it entirely** - do not include in metadata
-- **Be specific** - "architecture diagram" is better than "diagram"
-
-**Why this matters**: Agents choose figures based on these summaries. Wrong summaries lead to wrong figure selection, which produces confusing explanations.
+**Output**: Initialize `paper_metadata.json` with basic structure (figures array empty at this point)
 
 ---
 
 ## Step 1: Initialize Shared Working Memory
 
-Create the shared memory structure that all agents will access.
+Create `shared_memory.json` with initial structure.
+
+### Step 1.1: Generate Chapter Summaries
+
+**CRITICAL**: Coordinator must generate chapter summaries during initialization.
+
+For each chapter:
+1. Extract the chapter text from the paper
+2. Generate a 200-500 word summary
+3. Assign to an agent
+4. Set word count target based on intensity
+
+### shared_memory.json Schema
+
+```json
+{
+  "chapter_summaries": [
+    {
+      "chapter_id": "ch1",
+      "title": "Introduction",
+      "summary": "200-500 word summary...",
+      "assigned_agent": "agent_1",
+      "word_count_target": 5000,
+      "status": "pending",
+      "review_score": null,
+      "reviewer": null,
+      "review_comments": null
+    }
+  ],
+  "terminology_registry": {},
+  "concept_coverage_map": {},
+  "communication": {
+    "broadcast": [],
+    "directed": []
+  },
+  "external_resources": [],
+  "progress": {
+    "coordinator": "completed"
+  }
+}
+```
 
 **For detailed schema**, see [references/shared-memory-schema.md](references/shared-memory-schema.md)
 
-**Key components**:
-- **Paper metadata + chapter summaries** (not full text - each agent loads their own chapter)
-- **Terminology registry** with challenge mechanism
-- **Concept coverage map** (who explains what)
-- **Communication logs** (broadcast + directed messages)
-- **External resource library**
-- **Progress tracking**
+---
+
+## Step 2: Figure Extraction & Analysis (by Figure Analyst)
+
+### Step 2.1: Extract Images
+
+```bash
+python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]/figures/
+```
+
+### Step 2.2: Launch Figure Analyst Agent
+
+**CRITICAL**: Figure Analyst is the ONLY agent allowed to write `level1_summary`.
+
+Launch via Task tool:
+
+```
+你是 Paper Tutor 的 Figure Analyst，专门负责论文图片分析。
+
+## 你的任务
+
+分析 `[OUTPUT_DIR]/figures/` 中的所有图片。
+
+## 工具选择
+
+1. 首先尝试使用 Read 工具读取图片（Read 工具支持图片）
+2. 如果 Read 工具无法正确描述图片，标记 image_analysis.status = "unavailable"
+
+## 输出要求
+
+更新 `[OUTPUT_DIR]/paper_metadata.json`：
+
+```json
+{
+  "image_analysis": {
+    "status": "available|unavailable",
+    "method": "read_tool_multimodal",
+    "analyzed_at": "2026-02-25T10:00:00Z"
+  },
+  "figures": [
+    {
+      "file": "fig_xxx.png",
+      "page": 3,
+      "level1_summary": "1-2句话的图片描述...",
+      "figure_type": "architecture_diagram|chart|table|visualization|formula|other",
+      "key_elements": ["element1", "element2"],
+      "analyzed_by": "figure_analyst_agent",
+      "analyzed_at": "2026-02-25T10:00:00Z",
+      "analysis_method": "read_tool_multimodal",
+      "status": "analyzed"
+    }
+  ]
+}
+```
+
+## 关键约束
+
+1. **必须包含签名字段**：
+   - analyzed_by: 必须是 "figure_analyst_agent"
+   - analyzed_at: ISO 8601 时间戳
+   - analysis_method: 使用的分析方法
+
+2. **如果无法分析**：
+   - 设置 image_analysis.status = "unavailable"
+   - figures 数组留空
+
+3. **Better no display than wrong**：
+   - 不确定时跳过该图片
+   - 不编造图片内容
+```
+
+### Figure Analysis Signature Enforcement
+
+The validation script checks that `level1_summary` entries have proper signatures:
+
+```json
+{
+  "file": "fig_3_0.png",
+  "level1_summary": "...",
+  "analyzed_by": "figure_analyst_agent",  // Required if level1_summary exists
+  "analyzed_at": "2026-02-25T10:00:00Z",   // Required if level1_summary exists
+  "analysis_method": "read_tool_multimodal" // Required if level1_summary exists
+}
+```
+
+**If a figure has `level1_summary` but missing `analyzed_by: "figure_analyst_agent"`, validation will fail.**
 
 ---
 
-## Step 2: Launch Chapter Agents (Parallel)
+## Step 3: Launch Chapter Agents (Parallel)
 
-Launch N chapter agents simultaneously, one per major section.
-
-**Agent assignments**:
-- Agent 1: Abstract + Introduction
-- Agent 2: Related Work
-- Agent 3: Methodology
-- Agent 4: Experiments
-- Agent 5: Results + Discussion
-- Agent 6: Conclusion
-- (Adjust based on paper structure)
+Launch N chapter agents simultaneously based on intensity level.
 
 ### Chapter Agent Prompt Template
-
-When launching a chapter agent with the `Task` tool, use this prompt structure:
 
 ```
 你是 Paper Tutor 的章节讲解智能体，负责讲解论文的「{SECTION_NAME}」章节。
@@ -218,154 +261,184 @@ When launching a chapter agent with the `Task` tool, use this prompt structure:
 
 ## 必须完成的步骤（按顺序）
 
-### 1. 读取共享内存
+### 1. 读取共享内存（CRITICAL - 第一步）
+
 使用 Read 工具读取 `{OUTPUT_DIR}/shared_memory.json`，了解：
-- 哪些概念已被其他 agent 讲解
-- 哪些术语已定义
-- 有哪些外部资源可用
+- chapter_summaries: 其他章节的摘要
+- concept_coverage_map: 哪些概念已被其他 agent 讲解
+- terminology_registry: 哪些术语已定义
+- communication: 是否有发给你的消息
 
-### 2. 读取你负责的章节
-从 PDF 或章节文件中读取「{SECTION_NAME}」的完整内容。
+### 2. 读取图片元数据
 
-### 3. 识别并讲解核心概念
+使用 Read 工具读取 `{OUTPUT_DIR}/paper_metadata.json`：
+- image_analysis.status: 图片分析是否可用
+- figures[]: 图片列表及 Level 1 summary
+
+**重要**：你只能 READ figures，不能 WRITE figures。
+
+### 3. 读取你负责的章节
+
+从 PDF 中读取「{SECTION_NAME}」的完整内容。
+
+### 4. 识别并讲解核心概念
+
 对于每个核心概念：
-- 检查是否已被其他 agent 覆盖（在 shared_memory.json 的 concept_coverage_map 中）
+- 检查 concept_coverage_map 中是否已被其他 agent 覆盖
 - 如果已覆盖，决定是引用还是协商归属
-- 如果未覆盖，进行讲解
+- 如果未覆盖，进行讲解并更新 concept_coverage_map
 
-### 4. 选择并嵌入图片
-从 `{OUTPUT_DIR}/figures/` 中选择与你章节相关的图片：
-- 查看 `paper_metadata.json` 中的 figures 数组
-- 根据 summary 字段判断相关性
-- 使用 Read 工具读取图片进行分析
-- 将图片嵌入到讲解的合适位置
+### 5. 选择并嵌入图片
 
-### 5. 更新共享内存（关键步骤）
-**必须**使用 Edit 或 Write 工具更新 `{OUTPUT_DIR}/shared_memory.json`：
+如果 image_analysis.status == "available"：
+- 根据 level1_summary 选择相关图片
+- 嵌入图片到讲解中
+- **不要自己分析图片**，直接使用 Figure Analyst 提供的 level1_summary
 
-```json
-{
-  "concept_coverage_map": {
-    "你讲解的概念": {
-      "explainer": "agent_X",
-      "section": "{SECTION_NAME}",
-      "brief": "一句话概述"
-    }
-  },
-  "terminology_registry": {
-    "你定义的术语": {
-      "definition": "定义内容",
-      "section": "{SECTION_NAME}"
-    }
-  },
-  "progress": {
-    "agent_X_{SECTION_NAME}": "completed"
-  }
-}
-```
+如果 image_analysis.status != "available"：
+- 完全跳过图片，仅使用文字讲解
 
-### 6. 输出讲解内容
-将你的讲解写入 `{OUTPUT_DIR}/chapters/chapter_{XX}_output.md`
+### 6. 更新共享内存
+
+**必须**使用 Edit 工具更新 `{OUTPUT_DIR}/shared_memory.json`：
+- concept_coverage_map: 注册你讲解的概念
+- terminology_registry: 定义你引入的术语
+- progress: 标记你的任务为 "pending_review"
+
+### 7. 输出讲解内容
+
+将讲解写入 `{OUTPUT_DIR}/chapters/chapter_{XX}_output.md`
 
 ## 讲解要求
 
 - 强度级别：{INTENSITY}
 - 目标字数：{TARGET_WORDS}
 - 每个概念需要：通俗讲解、可视化（Mermaid）、举例说明
-- 图片要嵌入到相关概念中，不要放在文末
+- 图片嵌入到相关概念中
 
-## 输出文件
+## 完成后
 
-`{OUTPUT_DIR}/chapters/chapter_{XX}_output.md`
+更新 shared_memory.json 中你的章节状态为 "pending_review"，等待 Editor-in-Chief 审核。
 ```
 
 **For detailed chapter agent workflow**, see [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md)
 
-**Each chapter agent**:
+---
 
-1. **Reads their assigned chapter** (full text)
-2. **Checks shared memory** for:
-   - What concepts are already explained?
-   - What terms are defined?
-   - What external resources exist?
-3. **Identifies** core concepts in their chapter
-4. **For each concept**:
-   - Check if already covered → if yes, decide to reference or negotiate ownership
-   - Search external resources (tutorials, blogs, lectures)
-   - Create Mermaid visualizations if applicable
-   - Explain with prerequisites, examples, connections
-5. **Updates shared memory** with:
-   - Concepts they explain
-   - Terms they define
-   - External resources they find
-6. **Communicates** with other agents as needed
+## Step 4: Editor-in-Chief Review
+
+**CRITICAL**: Every chapter MUST be reviewed and approved by Editor-in-Chief before final output.
+
+### Editor-in-Chief Prompt Template
+
+```
+你是 Paper Tutor 的 Editor-in-Chief，负责审核所有章节讲解的质量。
+
+## 你的任务
+
+审核 Chapter Agent 产出的讲解内容，确保质量达标。
+
+## 审核步骤
+
+### 1. 读取章节讲解
+
+读取 `{OUTPUT_DIR}/chapters/chapter_{XX}_output.md`
+
+### 2. 读取图片元数据
+
+读取 `{OUTPUT_DIR}/paper_metadata.json`，验证图片引用是否正确
+
+### 3. 评估维度（每项 1-5 分）
+
+1. **内容准确性** (accuracy)
+   - 概念解释是否正确
+   - 公式是否准确
+   - 图片引用是否正确
+
+2. **讲解清晰度** (clarity)
+   - 是否有类比和例子
+   - 前置知识是否交代清楚
+   - 术语是否解释
+
+3. **结构完整性** (completeness)
+   - 核心概念是否都覆盖
+   - 是否有可视化（Mermaid）
+   - 图片是否嵌入正确位置
+
+4. **与其他章节一致性** (consistency)
+   - 术语使用是否一致
+   - 是否正确引用其他章节
+
+5. **目标字数达成** (word_count)
+   - 是否接近目标字数
+
+### 4. 计算总分
+
+total_score = (accuracy + clarity + completeness + consistency + word_count) / 5
+
+### 5. 更新 shared_memory.json
+
+```json
+{
+  "chapter_summaries": [
+    {
+      "chapter_id": "ch1",
+      "status": "approved|needs_revision",
+      "review_score": 4.2,
+      "reviewer": "editor_in_chief",
+      "review_comments": "..."
+    }
+  ]
+}
+```
+
+## 通过标准
+
+- **score >= 4.0**: approved
+- **score < 4.0**: needs_revision（返回修改意见给 Chapter Agent）
+
+## 如果需要修改
+
+1. 在 shared_memory.json 中设置 status = "needs_revision"
+2. 在 communication.directed 中发送修改意见给对应 Chapter Agent
+3. Chapter Agent 修改后重新提交审核
+```
+
+### Chapter Review Status Flow
+
+```
+pending → pending_review → approved
+                      ↘ needs_revision → pending_review → approved
+```
 
 ---
 
-## Step 3: Agent Coordination
+## Step 5: Agent Coordination
 
 ### Concept Ownership Negotiation
 
 When Agent A finds a concept already claimed by Agent B:
 
-```
-Agent A assesses:
-  "Is this concept more central to my chapter?"
-  "Is my explanation different/better?"
-  "Should we both explain it (different perspectives)?"
-        │
-        ┌───────┴───────┐
-        │               │
-    Don't dispute    Negotiate
-        │               │
-        ▼               ▼
-    Reference B    Message B + Editor-in-Chief
-                    │
-                    ▼
-            Editor-in-Chief arbitrates:
-            • Read full paper
-            • Assess primary location
-            • Decide: single owner vs split explanations
-```
+1. Agent A sends directed message to Agent B and Editor-in-Chief
+2. Editor-in-Chief arbitrates
+3. Decision is recorded in shared_memory.json
 
 ### Terminology Challenges
 
-```
-Agent B defines term X
-        │
-        ▼
-Agent A (in different chapter) finds the definition incomplete/wrong
-        │
-        ▼
-Agent A issues challenge → writes to shared memory
-        │
-        ▼
-Editor-in-Chief receives challenge
-        │
-        ▼
-Arbitration:
-  1. Read both definitions
-  2. Check term usage across paper
-  3. Decision: keep A / keep B / merge / split by context
-        │
-        ▼
-Update shared memory with arbitration result
-```
-
-**Roles**:
-- **Coordinator**: Manages task assignment, progress tracking, basic coordination
-- **Editor-in-Chief**: Has full paper access, arbitrates content disputes, ensures consistency
+1. Agent A challenges Agent B's definition via communication.directed
+2. Editor-in-Chief reviews both definitions
+3. Final decision recorded in terminology_registry
 
 ---
 
-## Step 4: Generate Final Output
+## Step 6: Generate Final Output
 
-After all agents complete, generate the final organized explanation.
+After ALL chapters are approved (score >= 4.0), generate `paper_explanation.md`.
 
 **Output structure**:
 
 ```markdown
-# [Paper Title] - 深度讲解 [强度: Medium]
+# [Paper Title] - 深度讲解 [强度: Light/Medium/Heavy]
 
 ## 论文概览
 - 标题、作者、发表信息
@@ -374,7 +447,7 @@ After all agents complete, generate the final organized explanation.
 
 ---
 
-## 第一章：引言
+## 第一章：[章节名]
 
 ### 📚 前置知识
 > 在阅读本章前，你需要理解以下概念：
@@ -389,12 +462,11 @@ After all agents complete, generate the final organized explanation.
 **原文定义**：[引用原文]
 
 **通俗讲解**：
-[详细讲解，1000-3000字，视强度而定]
+[详细讲解]
 
 **图解**：
 ![相关图片](figures/fig_xxx.png)
-
-[从图片中提取的洞察，帮助理解概念]
+[Figure Analyst 的分析解读]
 
 **可视化理解**：
 ```mermaid
@@ -407,28 +479,74 @@ graph TD
 
 ---
 
-## 第二章：方法
-
-[Agent 2 的讲解内容，包含嵌入的图片和解读]
-
----
-
-... (按原论文章节顺序)
-
----
-
 ## 附录
 
 ### A. 术语表
-- 所有定义的术语及统一说明
+- 所有定义的术语
 
 ### B. 外部资源推荐
 - 教程、博客、视频链接
 ```
 
-**重要**：图片应该嵌入到相关概念讲解中，而不是放在附录或单独的"图表讲解"小节。每张图片都应该有针对性的解读，帮助读者获得洞察。
+---
 
-**Output file**: `paper_explanation.md`
+## Step 7: Validation
+
+**CRITICAL**: Run validation script before considering the task complete.
+
+```bash
+python ~/.claude/skills/paper-tutor/scripts/validate_execution.py [OUTPUT_DIR]
+```
+
+### Validation Checks
+
+1. **Figure Analysis Signature**
+   - Every figure with `level1_summary` must have `analyzed_by: "figure_analyst_agent"`
+   - Missing signature = validation failure
+
+2. **Chapter Review Approval**
+   - Every chapter must have `status: "approved"`
+   - Every chapter must have `review_score >= 4.0`
+   - Every chapter must have `reviewer: "editor_in_chief"`
+
+3. **Required Files**
+   - paper_explanation.md exists
+   - paper_metadata.json exists
+   - shared_memory.json exists
+
+4. **Content Validation**
+   - Figures in metadata are referenced in explanation
+
+### Validation Output
+
+```
+============================================================
+Paper Tutor Execution Validation Report
+============================================================
+
+Output Directory: /path/to/output
+Validated At: 2026-02-25T10:30:00Z
+
+Overall Status: ✅ PASSED / ❌ FAILED
+------------------------------------------------------------
+
+✅ Required Files:
+   - All required files exist
+
+✅ Figure Analysis:
+   - Figures analyzed: 4
+   - Image analysis status: available
+   - All figures have valid signatures
+
+✅ Chapter Reviews:
+   - Chapters reviewed: 3
+   - All chapters approved with score >= 4.0
+
+✅ Explanation Content:
+   - All figures referenced in explanation
+
+============================================================
+```
 
 ---
 
@@ -437,75 +555,75 @@ graph TD
 ```
 [OUTPUT_DIR]/
 ├── paper_explanation.md              # Main output
-├── paper_metadata.json               # Extracted structure
-├── shared_memory.json                # Final shared memory state
-├── figures/                          # Extracted paper figures (REQUIRED)
-│   ├── fig_0_1_abc123.png           # Bitmap images
-│   ├── vector_3_0_def456.png        # Vector graphics rendered to PNG
+├── paper_metadata.json               # Paper facts + figure analysis (Figure Analyst writes)
+├── shared_memory.json                # Agent state + chapter reviews (All agents update)
+├── figures/                          # Extracted paper figures
+│   ├── fig_0_1_abc123.png
 │   └── ...
-├── chapters/                         # Individual agent outputs
-│   ├── chapter_01_agent_output.md
-│   ├── chapter_02_agent_output.md
+├── chapters/                         # Individual chapter outputs
+│   ├── chapter_01_output.md
 │   └── ...
-└── external_resources/               # Downloaded/saved resources
-    ├── chapter_01/
+└── external_resources/               # Downloaded resources
     └── ...
 ```
 
 ---
 
-## Tool Usage
+## File Permissions
 
-### Main Coordinator
-- **AskUserQuestion**: Get paper source, intensity level, output location
-- **Task**: Launch all sub-agents
-- **Write**: Create directory structure, initialize shared memory
-- **Bash**: Run `extract_figures.py` script to extract figures from PDF
-- **pdf**: Extract paper content from PDF
+| File | Coordinator | Figure Analyst | Chapter Agents | Editor-in-Chief |
+|------|-------------|----------------|----------------|-----------------|
+| paper_metadata.json | Create, Read | Write figures[] | Read only | Read only |
+| shared_memory.json | Create, Write | Read | Write concepts, terms, progress | Write reviews |
 
-### Figure Extraction (Step 0.5)
-- **Bash**: `python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF] -o [OUTPUT]/figures/`
-- **pdf**: Alternative method to extract images from PDF
+**Key constraint**: Chapter Agents CANNOT write to `paper_metadata.json.figures[]`.
+
+---
+
+## Tool Usage Summary
+
+### Coordinator
+- AskUserQuestion: Get paper source, intensity, output location
+- Task: Launch Figure Analyst, Chapter Agents, Editor-in-Chief
+- Write: Create directory structure, initialize files
+- Bash: Run extract_figures.py, validate_execution.py
+
+### Figure Analyst
+- Read: View extracted figures (multimodal)
+- Write: Update paper_metadata.json with figure analysis (with signature)
 
 ### Chapter Agents
-- **Read**: Access shared memory, their assigned chapter
-- **mcp__brave-search__brave_web_search**: Find external resources
-- **mcp__fetch__fetch**: Extract content from tutorials/blogs
-- **Write**: Generate chapter explanations, update shared memory
+- Read: shared_memory.json, paper_metadata.json, PDF content
+- Edit: Update shared_memory.json (concepts, terms, progress)
+- Write: Generate chapter output files
+- mcp__brave-search__brave_web_search: Find external resources
 
 ### Editor-in-Chief
-- **Read**: Full paper access, shared memory, challenge requests
-- **Write**: Update terminology registry, arbitration results
+- Read: All chapter outputs, shared_memory.json, paper_metadata.json
+- Edit: Update shared_memory.json with review scores and status
 
 ---
 
 ## Progressive Disclosure
 
-**Detailed implementation references**:
+**Detailed references**:
 
-- **Shared memory schema**: [references/shared-memory-schema.md](references/shared-memory-schema.md) - Complete structure
-- **Chapter agent workflow**: [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md) - Detailed prompts
-- **Formula explanation template**: [references/formula-template.md](references/formula-template.md) - How to explain equations
-- **Figure extraction guide**: [references/figure-extraction.md](references/figure-extraction.md) - How to extract figures from PDF
-- **Figure handling guide**: [references/figure-guide.md](references/figure-guide.md) - Mermaid vs original figures
+- **Shared memory schema**: [references/shared-memory-schema.md](references/shared-memory-schema.md)
+- **Chapter agent workflow**: [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md)
+- **Formula explanation template**: [references/formula-template.md](references/formula-template.md)
 
 ---
 
 ## Tips
 
-**When to use each intensity**:
-- **Light**: Quick understanding of main ideas (30-60 min read)
-- **Medium**: Deep dive for researchers (3-5 hours read)
-- **Heavy**: Comprehensive study for implementation (10+ hours read)
-
 **Quality indicators**:
 - Good explanations use analogies and examples
-- Every technical term is either explained or linked to terminology registry
+- Every technical term is either explained or linked
 - Formulas include boundary conditions and practical implications
 - Figures are "taught" not just described
 
-**Agent communication best practices**:
-- Always check shared memory before explaining a concept
-- Issue challenges politely with specific reasons
-- Use broadcast for global updates (external resources, terminology)
-- Use directed messages for specific negotiations
+**Common pitfalls to avoid**:
+- Skipping Figure Analyst and writing figure descriptions yourself
+- Not waiting for Editor-in-Chief approval
+- Not running validation script
+- Ignoring shared_memory.json and working in isolation

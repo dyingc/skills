@@ -1,6 +1,7 @@
 ---
 name: binary-analysis-orchestrator
-description: Comprehensive binary analysis orchestrator that coordinates static, dynamic, and symbolic analysis techniques. Use this skill when the user asks to: (1) Analyze or reverse engineer a binary file, (2) Solve CTF challenges involving binaries, (3) Find vulnerabilities in binary programs, (4) Understand how a binary works, (5) Perform comprehensive security assessments. This skill determines the optimal analysis approach and coordinates the use of static-binary-analysis, gdb-dynamic-analysis, and angr-binary-analysis skills.
+description: >
+  Comprehensive binary analysis orchestrator that coordinates static, dynamic, and symbolic analysis techniques. Use this skill when the user asks to: (1) Analyze or reverse engineer a binary file, (2) Solve CTF challenges involving binaries, (3) Find vulnerabilities in binary programs, (4) Understand how a binary works, (5) Perform comprehensive security assessments. This skill determines the optimal analysis approach and coordinates the use of static-binary-analysis, gdb-dynamic-analysis, and angr-binary-analysis skills.
 ---
 
 # Binary Analysis Orchestrator

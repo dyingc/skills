@@ -1,6 +1,7 @@
 ---
 name: static-binary-analysis
-description: Static binary analysis tool using Ghidra MCP for decompilation, disassembly, cross-reference analysis, and vulnerability discovery. Use this skill when the user asks to: (1) Analyze or reverse engineer a binary file, (2) Decompile or disassemble functions, (3) Find vulnerabilities or understand program logic, (4) Search for strings, imports, exports in binaries, (5) Examine binary structure or security protections, (6) Perform code audits or malware analysis. This is the primary skill for initial binary reconnaissance and static analysis.
+description: >
+  Static binary analysis tool using Ghidra MCP for decompilation, disassembly, cross-reference analysis, and vulnerability discovery. Use this skill when the user asks to: (1). Analyze or reverse engineer a binary file, (2) Decompile or disassemble functions, (3) Find vulnerabilities or understand program logic, (4) Search for strings, imports, exports in binaries, (5) Examine binary structure or security protections, (6) Perform code audits or malware analysis. This is the primary skill for initial binary reconnaissance and static analysis.
 ---
 
 # 静态二进制分析

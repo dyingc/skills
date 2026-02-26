@@ -16,29 +16,60 @@
 
 ---
 
+## 文件读取指南
+
+**两个文件，不同用途：**
+
+| 文件 | 内容 | 读取时机 |
+|------|------|----------|
+| `shared_memory.json` | Agent 协作状态（章节摘要、术语、概念覆盖、通信） | **第一步，必须读取** |
+| `paper_metadata.json` | 论文元数据（图片分析状态、figures 列表） | 需要图片时读取 |
+
+---
+
 ## 工作流程
 
-### Step 1: 读取共享内存和你的章节
+### Step 1: 读取 shared_memory.json（CRITICAL - 第一步）
 
 ```python
-# 伪代码
-memory = load_shared_memory()
+# 使用 Read 工具读取 shared_memory.json
+memory = read_json("{OUTPUT_DIR}/shared_memory.json")
 
-# 读取元信息
-paper_title = memory["paper"]["metadata"]["title"]
-all_summaries = memory["paper"]["chapter_summaries"]
+# 从 shared_memory.json 获取：
+chapter_summaries = memory["chapter_summaries"]  # 所有章节的 200-500 字摘要
+terms = memory["terminology_registry"]           # 已定义的术语
+concepts = memory["concept_coverage_map"]        # 概念覆盖情况
+communication = memory["communication"]          # 广播和定向消息
+resources = memory["external_resources"]         # 外部资源
+progress = memory["progress"]                    # 进度状态
 
-# 读取术语表
-terms = memory["terminology"]["terms"]
+# 检查是否有发给你的定向消息
+my_messages = [
+    msg for msg in communication.get("directed", [])
+    if my_agent_name in msg.get("recipients", [])
+]
+```
 
-# 读取概念覆盖
-concepts = memory["concept_coverage"]["concepts"]
+### Step 1.5: 读取 paper_metadata.json（用于图片）
 
-# 读取外部资源
-resources = memory["external_resources"]["resources"]
+```python
+# 使用 Read 工具读取 paper_metadata.json
+metadata = read_json("{OUTPUT_DIR}/paper_metadata.json")
 
-# 读取自己负责的章节全文
-my_chapter = read_file(memory["paper"]["metadata"]["chapter_files"][my_chapter_id])
+# 从 paper_metadata.json 获取：
+image_status = metadata.get("image_analysis", {}).get("status")
+figures = metadata.get("figures", [])
+
+# 如果 image_status != "available"，跳过所有图片
+if image_status != "available":
+    skip_figures = True
+```
+
+### Step 2: 读取你负责的章节全文
+
+```python
+# 从原始 PDF 读取你负责的章节（不是从 shared_memory）
+my_chapter = read_pdf_chapter(pdf_path, my_chapter_id)
 ```
 
 ### Step 2: 识别核心概念
@@ -113,60 +144,88 @@ for concept in my_concepts:
 
 ### Step 6: 选择并嵌入图片
 
-**核心原则：图片是讲解的一部分，不是附录。**
+**核心原则**：
+1. **图片是讲解的一部分，不是附录**
+2. **绝不自己猜测图片内容** - 必须通过 Figure Analyst 分析
+3. **Better no display than messed up** - 如果无法分析，跳过图片
 
-#### 6.1 查找相关图片
-
-从 `paper_metadata.json` 的 `figures` 数组中，根据 `summary` 判断哪些图片与你的章节相关：
+#### 6.1 检查图片分析状态
 
 ```python
-# 读取图片元数据
-figures = memory["paper"]["metadata"]["figures"]
+# 首先检查图片分析是否可用
+image_status = memory["paper"]["metadata"].get("image_analysis", {})
 
+if image_status.get("status") != "available":
+    # 图片分析不可用，完全跳过图片
+    print("图片分析不可用，将仅使用文字讲解")
+    skip_figures = True
+else:
+    skip_figures = False
+    figures = memory["paper"]["metadata"].get("figures", [])
+```
+
+#### 6.2 查找相关图片
+
+如果图片分析可用，从 `paper_metadata.json` 的 `figures` 数组中，根据 `level1_summary` 判断哪些图片与你的章节相关：
+
+```python
 # 根据你讲解的概念筛选
 relevant_figures = []
 for concept in my_concepts:
     for fig in figures:
-        if is_relevant(fig["summary"], concept):
+        if is_relevant(fig["level1_summary"], concept):
             relevant_figures.append(fig)
 ```
 
-#### 6.2 Level 2 深度分析（按需）
+#### 6.3 Level 2 深度分析（通过 Figure Analyst）
 
-**当确定使用某张图片时，必须先读取并分析**：
+**当确定使用某张图片时，必须调用 Figure Analyst 进行深度分析**（不要自己分析）：
 
 ```python
-# 读取图片
-img = read_figure(fig["file"])
+# 调用 Figure Analyst 进行 Level 2 分析
+# 使用 Task 工具启动 Figure Analyst
 
-# 根据当前讲解上下文生成分析
-analysis = analyze_figure(img, context={
-    "section": my_section,
-    "concept": current_concept,
-    "purpose": "extract insights for explanation"
+analysis = call_figure_analyst({
+    "figure_path": fig["file"],
+    "context": {
+        "section": my_section,
+        "concept": current_concept,
+        "purpose": "Level 2 deep analysis for chapter explanation"
+    }
 })
 
 # 分析结果用于丰富讲解
 insights = analysis["insights"]
-examples = analysis["examples"]
+teaching_points = analysis["teaching_points"]
+component_mapping = analysis["component_mapping"]
 ```
 
-**分析 Prompt 模板**：
+**Figure Analyst Prompt 模板**（通过 Task 工具）：
 
 ```
-我正在讲解论文的「{section_title}」章节，核心概念是「{concept}」。
+你是 Figure Analyst。请对以下图片进行 Level 2 深度分析。
 
-请分析这张图片，帮助我丰富讲解内容：
+上下文：正在讲解 [章节名]，核心概念是 [概念名]
+图片路径：{figure_path}
 
-1. 这张图中有哪些视觉元素直接展示了 {concept}？
-2. 有哪些细节是读者可能忽略但很重要的？
-3. 图中的数据/结构揭示了什么洞察？
-4. 有什么可以用来举例或类比的地方？
+请提供：
+1. 详细描述图中与当前概念相关的所有元素
+2. 从视觉设计中提取的洞察（颜色、布局、箭头等含义）
+3. 可用于讲解的具体要点
+4. 图中各组件与概念的映射关系
+
+输出 JSON：
+{
+  "detailed_description": "...",
+  "insights": ["..."],
+  "teaching_points": ["..."],
+  "component_mapping": {"图中元素": "对应概念"}
+}
 ```
 
-#### 6.3 嵌入到讲解中
+#### 6.4 嵌入到讲解中
 
-**在讲解概念时，将图片和解读放在合适的位置**：
+**在讲解概念时，将图片和 Figure Analyst 的分析结果放在合适的位置**：
 
 ```markdown
 #### 概念：Multi-Head Attention
@@ -179,6 +238,8 @@ examples = analysis["examples"]
 **图解**：
 ![Multi-Head Attention](figures/fig_3_1_attention.png)
 
+[这里插入 Figure Analyst 的 Level 2 分析结果]
+
 这张图展示了多头注意力的并行结构。注意几个关键点：
 - 8 个头并行计算，每个头维度是 64（不是 512）
 - 拼接后通过 W^O 投影回原始维度
@@ -188,7 +249,7 @@ examples = analysis["examples"]
 [继续讲解...]
 ```
 
-#### 6.4 图片放置规则
+#### 6.5 图片放置规则
 
 - **架构图** → 放在"模型架构"或"方法"章节
 - **注意力可视化** → 放在讲解注意力机制的地方
@@ -199,11 +260,14 @@ examples = analysis["examples"]
 - ❌ 所有图片放在附录
 - ❌ 只在文末列出图片链接
 - ❌ 图片和讲解内容分离
+- ❌ **自己猜测图片内容而不通过 Figure Analyst**
+- ❌ **使用无法分析的图片**
 
 **正确做法**：
 - ✅ 图片嵌入到相关概念讲解中
-- ✅ 每张图片有针对性的解读
-- ✅ 从图片中提取洞察来丰富文字讲解
+- ✅ 通过 Figure Analyst 获取准确的 Level 2 分析
+- ✅ 将分析结果融入讲解，帮助读者理解
+- ✅ 如果图片分析不可用，仅用文字讲解
 
 **参见** [figure-guide.md](figure-guide.md) 了解更多图表处理细节
 
@@ -381,7 +445,11 @@ for query in search_queries:
 - [ ] 是否使用了类比或例子？
 - [ ] 是否包含了可视化（Mermaid 图）？
 - [ ] 公式是否逐符号解释了？
-- [ ] 图表是否"教会"读者如何阅读，而不只是描述？
+- [ ] 图片处理是否符合规范？
+  - [ ] 检查了 `image_analysis.status` 是否可用？
+  - [ ] 如果不可用，是否正确跳过了图片？
+  - [ ] 如果可用，是否通过 Figure Analyst 获取了 Level 2 分析？
+  - [ ] 是否将图片分析结果融入了讲解？
 - [ ] **是否更新了 shared_memory.json 的 concept_coverage_map？**
 - [ ] **是否更新了 shared_memory.json 的 terminology_registry？**
 - [ ] **是否更新了 shared_memory.json 的 progress 状态为 completed？**

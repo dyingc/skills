@@ -1,6 +1,7 @@
 ---
 name: gdb-dynamic-analysis
-description: Dynamic binary analysis using GDB MCP for runtime debugging and verification. Use this skill when the user asks to: (1) Verify static analysis hypotheses at runtime, (2) Debug or trace program execution flow, (3) Set breakpoints and inspect memory/registers at specific points, (4) Observe actual program behavior during execution, (5) Validate assumptions from static analysis, (6) Step through code interactively. This skill complements static analysis by providing runtime validation.
+description: >
+  Dynamic binary analysis using GDB MCP for runtime debugging and verification. Use this skill when the user asks to: (1) Verify static analysis hypotheses at runtime, (2) Debug or trace program execution flow, (3) Set breakpoints and inspect memory/registers at specific points, (4) Observe actual program behavior during execution, (5) Validate assumptions from static analysis, (6) Step through code interactively. This skill complements static analysis by providing runtime validation.
 ---
 
 # GDB 动态二进制分析

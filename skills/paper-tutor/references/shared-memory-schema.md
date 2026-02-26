@@ -14,26 +14,99 @@ Each agent only loads relevant portions into their context.
 
 ---
 
+## File Separation: paper_metadata.json vs shared_memory.json
+
+**Two separate files with distinct purposes:**
+
+| File | Type | Content | Who Writes | Who Reads |
+|------|------|---------|------------|-----------|
+| **paper_metadata.json** | Static | Paper's immutable facts | Coordinator (once), Figure Analyst | Figure Analyst, Chapter Agents |
+| **shared_memory.json** | Dynamic | Agent collaboration state | Coordinator, Chapter Agents, Editor-in-Chief | All agents |
+
+### paper_metadata.json (Static - Paper Facts)
+
+Generated once during extraction, rarely changes:
+
+```json
+{
+  "title": "Attention Is All You Need",
+  "authors": ["Vaswani et al."],
+  "year": 2017,
+  "venue": "NeurIPS",
+  "pdf_source": "/path/to/paper.pdf",
+
+  "chapters": [
+    {"id": "ch1", "title": "Introduction", "page_range": "1-2"},
+    {"id": "ch2", "title": "Background", "page_range": "2-3"}
+  ],
+
+  "image_analysis": {
+    "status": "available",
+    "method": "model_multimodal",
+    "analyzed_at": "2026-02-24T10:00:00Z"
+  },
+
+  "figures": [
+    {
+      "file": "fig_3_0_xxx.png",
+      "page": 3,
+      "level1_summary": "Transformer architecture diagram...",
+      "figure_type": "architecture_diagram",
+      "status": "analyzed"
+    }
+  ]
+}
+```
+
+### shared_memory.json (Dynamic - Agent State)
+
+Updated throughout the workflow:
+
+```json
+{
+  "chapter_summaries": [...],
+  "terminology_registry": {...},
+  "concept_coverage_map": {...},
+  "communication": {...},
+  "external_resources": [...],
+  "progress": {...}
+}
+```
+
+---
+
 ## Complete Schema
 
 ```yaml
 shared_memory:
 
-  # ===== PAPER CONTENT =====
-  # 重要：章节全文不存储在共享内存中
-  # - 每个智能体只读取自己负责的章节全文（从原始论文文件）
-  # - 其他智能体只能看到章节摘要（200-500字）
-  # - 这样可以节省约 66% 的 context 使用
-  paper:
-    # 元信息（所有智能体可见）
-    metadata:
-      title: "论文标题"
-      authors: ["作者1", "作者2"]
-      year: 2026
-      venue: "会议/期刊名称"
-      arxiv_id: "arXiv:XXXX.XXXXX"
-      pdf_source: "URL or local path"
-      original_file_path: "/path/to/paper.pdf"  # 原始文件位置
+  # ===== CHAPTER SUMMARIES =====
+  # Coordinator generates these during Step 1 initialization
+  # Each summary is 200-500 words
+  # Purpose: Allow agents to understand other chapters without loading full text
+  chapter_summaries:
+    - chapter_id: "ch1"
+      title: "Introduction"
+      summary: |
+        This chapter introduces the problem of sequence modeling and explains
+        why existing RNN-based approaches have limitations. The authors propose
+        a new architecture called Transformer that relies entirely on attention
+        mechanisms...
+      assigned_agent: "agent_1"
+      word_count_target: 5000  # Based on intensity level
+
+    - chapter_id: "ch2"
+      title: "Background"
+      summary: "..."
+      assigned_agent: "agent_2"
+      word_count_target: 8000
+
+  # ===== TERMINOLOGY REGISTRY =====
+  # Agents define terms as they explain concepts
+  # Supports challenge mechanism for disputes
+        figure_type: "architecture_diagram"
+        key_elements: ["Encoder", "Decoder", "Multi-Head Attention"]
+        status: "analyzed"  # analyzed | uncertain (analyzed but with low confidence)
 
     # 章节摘要（所有智能体可见）
     # 每个章节的 200-500 字摘要
@@ -433,22 +506,26 @@ def read_shared_memory(agent_name, chapter_id):
     # 1. 读取元信息
     metadata = memory["paper"]["metadata"]
 
-    # 2. 读取所有章节摘要（了解全局）
+    # 2. 读取图片分析状态和图列表
+    image_analysis = memory["paper"]["metadata"].get("image_analysis", {})
+    figures = memory["paper"]["metadata"].get("figures", [])
+
+    # 3. 读取所有章节摘要（了解全局）
     summaries = memory["paper"]["chapter_summaries"]
 
-    # 3. 读取自己负责的章节（从原始论文文件）
+    # 4. 读取自己负责的章节（从原始论文文件）
     my_chapter = load_chapter_from_paper(chapter_id)
 
-    # 4. 读取术语表
+    # 5. 读取术语表
     terms = memory["terminology"]["terms"]
 
-    # 5. 读取概念覆盖
+    # 6. 读取概念覆盖
     concepts = memory["concept_coverage"]["concepts"]
 
-    # 6. 读取广播消息
+    # 7. 读取广播消息
     broadcast = memory["communication"]["broadcast"]
 
-    # 7. 只读取发给自己的定向消息
+    # 8. 只读取发给自己的定向消息
     directed = [
         msg for msg in memory["communication"]["directed"]
         if agent_name in msg["recipients"]
@@ -456,6 +533,8 @@ def read_shared_memory(agent_name, chapter_id):
 
     return {
         "metadata": metadata,
+        "image_analysis": image_analysis,
+        "figures": figures,
         "summaries": summaries,
         "my_chapter": my_chapter,
         "terms": terms,
@@ -528,3 +607,32 @@ def update_shared_memory(agent_name, updates):
 2. **广播消息只保留最近 50 条**
 3. **已解决的定向消息归档**
 4. **外部资源只存储元信息，不存储完整内容**
+
+---
+
+## Summary: File Responsibilities
+
+| File | Content | When to Read | When to Write |
+|------|---------|--------------|---------------|
+| **paper_metadata.json** | Paper's static facts | Figure Analyst (Step 0.5), Chapter Agents (for figures) | Coordinator (Step 0), Figure Analyst (Step 0.5) |
+| **shared_memory.json** | Agent runtime state | Every agent at start | Coordinator (Step 1), Chapter Agents, Editor-in-Chief |
+
+### What goes where:
+
+**paper_metadata.json** (Static):
+- ✅ title, authors, year, venue
+- ✅ chapters structure (id, title, page_range)
+- ✅ image_analysis status
+- ✅ figures[] with Level 1 summaries
+- ❌ NO chapter summaries (those go in shared_memory)
+- ❌ NO agent-produced data
+
+**shared_memory.json** (Dynamic):
+- ✅ chapter_summaries (200-500 words each)
+- ✅ terminology_registry
+- ✅ concept_coverage_map
+- ✅ communication (broadcast + directed)
+- ✅ external_resources
+- ✅ progress
+- ❌ NO paper metadata (that's in paper_metadata.json)
+- ❌ NO figure files (those are in figures/ directory)
