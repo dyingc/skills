@@ -51,6 +51,11 @@ Do not perform broad architecture exploration unless the update cannot be evalua
 
 ### Stage 4: Priority-Based Review (Update-Centric)
 
+Before evaluating issues, align on review assumptions:
+
+- Assume the submitted update is already runnable (developer has executed E2E validation)
+- Do not spend review time on compilation/build/test-pass checks unless the user explicitly asks
+
 #### 🔴 Highest Priority: Business Logic / Implementation Approach
 
 **Questions to evaluate:**
@@ -131,6 +136,7 @@ Provide actionable items:
 7. **Be Constructive**: Frame suggestions as improvements
 8. **Prioritize**: Don't get overwhelmed by small issues; focus on important problems
 9. **Call Out Scope Changes**: If user asks for full-repo audit, explicitly acknowledge scope expansion
+10. **Skip Compile Verification by Default**: Treat build/compile/run checks as out of scope unless explicitly requested
 
 ## Tools Used
 
