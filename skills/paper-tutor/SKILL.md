@@ -349,6 +349,14 @@ Launch N chapter agents simultaneously based on intensity level.
 - 目标字数：{TARGET_WORDS}
 - 每个概念需要：通俗讲解、可视化（Mermaid）、举例说明
 - 图片嵌入到相关概念中
+- 章节输出必须包含：
+  - `### 📚 前置知识`
+  - 至少 3 个 `#### 概念：...` 小节
+  - 每个概念小节至少包含：`原文定义`、`通俗讲解`、`为什么需要这个概念`、`举例说明`
+  - 若章节含公式：至少 1 个公式使用 [references/formula-template.md](references/formula-template.md) 的简化模板讲解
+- 章节输出质量下限（硬性）：
+  - 内容单位（中文字符 + 英文词）必须 >= `max(180, 0.35 * TARGET_WORDS)`
+  - 低于下限时不得提交 `pending_review`
 
 ## 完成后
 
@@ -430,6 +438,11 @@ total_score = (accuracy + clarity + completeness + consistency + word_count) / 5
 
 - **score >= 4.0**: approved
 - **score < 4.0**: needs_revision（返回修改意见给 Chapter Agent）
+- **硬性否决条件（任一命中即 needs_revision）**：
+  - 章节未满足最小内容单位阈值（`max(180, 0.35 * word_count_target)`）
+  - 缺少 `前置知识` 或核心概念小节数 < 3
+  - 章节包含图片但未使用 `paper_metadata.json.figures[].level1_summary` 进行解读
+  - 出现新增编号章节（如“第七章”）但未在 `shared_memory.chapter_summaries` 中注册并通过审核
 
 ## 如果需要修改
 
@@ -468,6 +481,15 @@ When Agent A finds a concept already claimed by Agent B:
 ## Step 6: Generate Final Output
 
 After ALL chapters are approved (score >= 4.0), generate `paper_explanation.md`.
+
+**CRITICAL merge rule**:
+
+1. Final document chapters must be merged from approved `chapters/chapter_{XX}_output.md` only.
+2. Chapter count/order must exactly match:
+   - `paper_metadata.json.chapters`
+   - `shared_memory.json.chapter_summaries`
+3. Do NOT create new numbered chapters during merge.
+   - If you want to add practice notes or implementation tips, put them in `附录` sections (not `第X章`).
 
 **Output structure**:
 
@@ -550,6 +572,15 @@ python ~/.claude/skills/paper-tutor/scripts/validate_execution.py [OUTPUT_DIR]
 
 4. **Content Validation**
    - Figures in metadata are referenced in explanation
+
+5. **Chapter Consistency**
+   - Chapter counts in metadata/shared_memory/chapter files/final explanation must match
+   - No extra numbered chapters in final explanation
+
+6. **Chapter Coverage Floor**
+   - Each chapter output must satisfy minimum content units:
+     - `content_units = chinese_chars + english_words`
+     - `content_units >= max(180, 0.35 * word_count_target)`
 
 ### Validation Output
 
