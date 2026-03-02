@@ -1,79 +1,93 @@
 ---
 name: code-review
-description: "Conducts deep code review focused on the to-be-merged update (diff/PR), prioritizing business logic correctness, logic errors, and security vulnerabilities introduced by the update. Use when: (1) User asks to review code, code review, or review branch; (2) User requests branch comparison or reviews diff; (3) User mentions 审查代码, 对比分支, or 审查 diff; (4) User provides two branch names for comparison. Use repository context only as supporting information to understand the update, not as a full codebase audit."
+description: "Use when user asks to review code, compare branches, or review a diff/PR for merge readiness. Focus on the to-be-merged update and prioritize business logic correctness, logic errors, and security risks introduced by the update."
 ---
 
 # Code Review
 
 ## Core Workflow
 
-### Stage 1: Define Update Scope (Must Execute First!)
+### Stage 0: Sync and Lock Latest Commit Scope (Must Execute First!)
+
+Before reading code, lock review scope to the **latest commit tips** of both branches:
+
+1. Identify source (merge) branch and target branch.
+2. Fetch latest remote refs for both branches.
+3. Resolve exact commit IDs (SHA) for both latest tips.
+4. Use these SHAs as immutable review scope for the entire review.
+5. In the report header, explicitly show:
+   - `Target branch + commit SHA`
+   - `Source branch + commit SHA`
+   - `Compared range: <target_sha>..<source_sha>`
+
+Recommended commands:
+
+```bash
+# Fetch latest heads
+git fetch origin <target-branch> <source-branch>
+
+# Lock exact SHAs
+git rev-parse origin/<target-branch>
+git rev-parse origin/<source-branch>
+```
+
+If user explicitly asks to review local-unpushed commits, state that scope override clearly.
+
+### Stage 1: Define Update Scope
 
 Before deep analysis, lock the review target to the to-be-merged update:
 
-1. Identify source and target branches (or PR base/head)
-2. Generate the exact diff and changed-file list
-3. Treat this diff as the primary review scope
-4. Do not expand into unrelated full-repo audits unless the user explicitly asks
+1. Generate exact diff and changed-file list from locked SHAs.
+2. Treat this diff as the primary review scope.
+3. Do not expand into unrelated full-repo audits unless user explicitly asks.
 
 ### Stage 2: Get Diff
 
-Run `git diff` to get the differences between two branches:
+Use the locked commit SHAs to avoid branch drift during review:
 
 ```bash
-# Compare two branches
-git diff main..feature-branch
+# Compare full diff
+git diff <target_sha>..<source_sha>
 
-# Show files changed
-git diff main..feature-branch --stat
+# Show file stats
+git diff --stat <target_sha>..<source_sha>
 
-# Compare specific files
-git diff main..feature-branch -- path/to/file
+# List changed files
+git diff --name-only <target_sha>..<source_sha>
 
-# If user provides branch names, use them directly
-git diff branch1..branch2
-
-# List changed files quickly
-git diff branch1..branch2 --name-only
+# Inspect one file
+git diff <target_sha>..<source_sha> -- path/to/file
 ```
-
-If user only provides one branch, assume comparison with main/master.
 
 ### Stage 3: Load Just-Enough Context (Support Only)
 
-Load only the context needed to understand changed code behavior:
+Load only context needed to understand changed behavior:
 
-1. Read changed files/hunks first
-2. Read directly related call sites, interfaces, schemas, and tests when required
-3. Read repository docs/config only when they are necessary to interpret update behavior
+1. Read changed hunks first.
+2. Read directly related call sites, interfaces, schemas, and tests when required.
+3. Read docs/config only when necessary to interpret update behavior.
 
 Do not perform broad architecture exploration unless the update cannot be evaluated otherwise.
 
 ### Stage 4: Priority-Based Review (Update-Centric)
 
-Before evaluating issues, align on review assumptions:
+Before evaluating issues, align on assumptions:
 
-- Assume the submitted update is already runnable (developer has executed E2E validation)
-- Do not spend review time on compilation/build/test-pass checks unless the user explicitly asks
+- Assume update is runnable (developer has done E2E validation)
+- Do not spend review time on build/test-pass checks unless user explicitly asks
 
 #### 🔴 Highest Priority: Business Logic / Implementation Approach
 
 **Questions to evaluate:**
-- Is the update implementation approach reasonable for the stated change?
+- Is the implementation approach reasonable for the stated change?
 - Does the update preserve or correctly modify business process behavior?
 - Are update-side data flow and state transitions correct?
 - Does the update create regressions in directly affected workflows?
 - Is requirement interpretation in the update accurate?
 
-**Important**: If you cannot determine whether business logic is correct (e.g., lack of business background, incomplete requirements, uncertain business goals), explicitly state:
+**Important**: If business correctness cannot be judged (missing business context, unclear requirements), explicitly state:
 
 > "由于缺乏 [specific business background], 我无法判断这个实现思路是否正确。建议与产品经理确认。"
-
-**How to evaluate business logic:**
-- Does changed logic match the requirement?
-- Are changed boundary conditions handled correctly?
-- Are changed data flow and state changes correct?
-- Are there obvious logic flaws introduced by the update?
 
 #### 🔴 High Priority: Logic Errors
 
@@ -96,22 +110,26 @@ Before evaluating issues, align on review assumptions:
 
 Performance and code quality issues relevant to changed code.
 
-### Stage 5: Report Findings with Strict Scope Labels
+### Stage 5: Report Findings with Strict Scope Labels and Context
 
-Report findings primarily for changed code. For each finding, include:
+Report findings primarily for changed code. For **each finding**, include:
 
 1. Severity
 2. File and line reference
-3. Why it is a problem
-4. Suggested fix
+3. **Code context snippet with line numbers** (small, focused snippet)
+4. **Background** (why this code exists in flow/business context; 1-3 sentences)
+5. Why it is a problem
+6. Suggested fix
 
-If an issue is outside the diff but discovered while tracing impact, label it explicitly:
+If issue is outside diff but found while tracing impact, label explicitly:
 
-- `Out-of-scope (context-only)`: not part of merge blocking unless it affects this update directly
+- `Out-of-scope (context-only)`: not merge-blocking unless it directly affects this update
+
+If user challenges line numbers, re-check against locked SHAs and re-print code context.
 
 ## Risk Assessment
 
-Provide a clear assessment at the end of the review:
+Provide a clear assessment at the end:
 
 - **Business Logic Risk (Update)**: Low / Medium / High / Unable to Judge [needs business confirmation]
 - **Logic Risk (Update)**: Low / Medium / High
@@ -127,20 +145,20 @@ Provide actionable items:
 
 ## Important Principles
 
-1. **Honest Assessment**: If you cannot judge business logic, state it clearly with reasons
-2. **Update Scope First**: Keep the review centered on the to-be-merged diff
-3. **Context as Support**: Use repository context only to understand update impact
-4. **Business Logic First**: Evaluate whether the update implementation approach is reasonable first
-5. **Focus on Approach Over Details**: Care about "whether this is correct" rather than just "whether code is well-written"
-6. **Be Specific**: Reference specific files, functions, and line numbers
+1. **Latest Commit First**: Always review latest tips of both branches unless user overrides scope
+2. **Honest Assessment**: If business logic cannot be judged, state it clearly with reason
+3. **Update Scope First**: Keep review centered on to-be-merged diff
+4. **Context as Support**: Use repository context only to understand update impact
+5. **Business Logic First**: Evaluate implementation approach before style details
+6. **Evidence-Backed Findings**: Every key finding should include line-numbered code context + short background
 7. **Be Constructive**: Frame suggestions as improvements
-8. **Prioritize**: Don't get overwhelmed by small issues; focus on important problems
-9. **Call Out Scope Changes**: If user asks for full-repo audit, explicitly acknowledge scope expansion
-10. **Skip Compile Verification by Default**: Treat build/compile/run checks as out of scope unless explicitly requested
+8. **Prioritize**: Focus on important issues over minor nits
+9. **Call Out Scope Changes**: If user asks for full-repo audit, acknowledge scope expansion
+10. **Skip Compile Verification by Default**: Treat build/run checks as out of scope unless explicitly requested
 
 ## Tools Used
 
 - Read - Read files
 - Glob - Find files
 - Grep - Search patterns
-- Bash - Run git diff
+- Bash - Run git diff / git fetch / git rev-parse
