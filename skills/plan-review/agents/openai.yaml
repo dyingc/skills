@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Review"
+  short_description: "Review AI dev plans for logic and test coverage"
+  default_prompt: "Use $plan-review to audit this development plan for logic holes, execution ambiguity, and test coverage risks."

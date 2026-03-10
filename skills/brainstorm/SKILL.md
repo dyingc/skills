@@ -17,7 +17,6 @@ allowed-tools:
   - mcp__brave-search__brave_local_search
   - mcp__brave-search__brave_summarizer
   - mcp__fetch__fetch
-  - mcp__web_reader__webReader
 
   # Core tools for brainstorm workflow
   - AskUserQuestion
@@ -101,10 +100,14 @@ Task(subagent_type="general-purpose", prompt="[ADAPTED_PROMPT]", description="Br
 - All agents receive identical prompt instructions
 - Launch in parallel for efficiency
 - Use short, clear descriptions (3-5 words)
-- **Sub-agents have full tool access** including WebSearch, file operations
+- **Sub-agents tool priority:**
+  - **PREFERRED:** `mcp__brave-search__*` tools for web searches
+  - **PREFERRED:** `mcp__fetch__fetch` to fetch webpage content
+  - **FALLBACK:** `WebSearch` or `mcp__web_reader__webReader` only if MCP tools unavailable
 - **Code execution**: Sub-agents should propose code/scripts for you (main agent) to execute
 - **Encourage tool use**: When prompts benefit from current information, explicitly invite web research:
   - "Use mcp__brave-search__brave_web_search to find recent examples and best practices"
+  - "Use mcp__fetch__fetch to fetch webpage content"
   - "Research current industry approaches before suggesting solutions"
   - "Include web sources to support your recommendations"
   - "Propose code snippets or scripts that I can execute to validate your ideas"
@@ -220,12 +223,21 @@ After brainstorming completes, consider transitioning to the research skill if:
 - **Write/Edit**: Format synthesis output
 
 ### Sub-Agent Tools (Parallel, Independent)
+
+**PREFERRED MCP Tools:**
 - **mcp__brave-search__brave_web_search** (encouraged): Find current examples, best practices, competitive analysis
+- **mcp__brave-search__brave_news_search**: Recent news and market trends
+- **mcp__fetch__fetch**: Fetch and extract content from specific URLs for detailed analysis
 - **Read/Grep/Glob** (as needed): Explore existing codebase if relevant to brainstorm
 - **Code proposals**: Suggest scripts for main agent to execute (don't run directly)
+
+**FALLBACK (if MCP tools unavailable):**
+- **WebSearch** tool
+- **mcp__web_reader__webReader**
 
 ### Tool Emphasis
 - **Diversity over depth**: Each agent explores different angles independently
 - **Speed over thoroughness**: Quick searches to inform creative thinking
 - **Examples over rigor**: Find representative examples, not comprehensive coverage
 - **Parallel exploration**: No agent sees another's output until synthesis phase
+- **MCP tools preferred**: Sub-agents should prefer Brave Search and Fetch MCP tools, fall back to built-in tools if needed
