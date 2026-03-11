@@ -212,6 +212,17 @@ description: pwn.college CTF 学习指导技能，为学生提供渐进式、个
 - 学生主动询问工具用法
 - 引导使用新工具特性
 
+**重要：静态分析工具优先级**
+当需要进行二进制静态分析时，必须遵循以下优先级顺序（详见 [tools/static_analysis.md](references/tools/static_analysis.md)）：
+1. **优先级 1**: Ghidra MCP 工具（反编译、交叉引用、字符串搜索等）
+2. **优先级 2**: radare2 系列工具（radare2, rabin2 等）
+3. **优先级 3**: 其他工具（objdump, readelf, strings 等）- 仅当前两者不可用时使用
+
+例如，需要查看汇编代码时：
+- 首选：使用 Ghidra MCP 的 `disassemble_function` 或 `decompile_function`
+- 次选：使用 `radare2` 命令（`r2 binary → aaa → pdf @func`）
+- 备选：`objdump -M intel -d binary`（仅当前两者不可用时）
+
 ### Modules（模块知识图谱）
 
 从 `references/modules/` 加载文件：
