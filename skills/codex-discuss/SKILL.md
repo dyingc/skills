@@ -5,7 +5,23 @@ description: "Structured multi-round discussion with Codex for independent secon
 
 # Codex Discuss
 
-Bounded multi-round discussion with Codex CLI for design review, code review, or assumption validation. Default 2 rounds, max 3 (tie-breaking only).
+Bounded multi-round discussion with Codex CLI for design review, code review, or assumption validation. Default 2 rounds, max 4 rounds.
+
+## Core Principle: Discussion, Not Delegation
+
+**This is a DISCUSSION skill, not an "ask Codex and follow" skill.**
+
+You are an active participant, not a passive recipient. Your role:
+
+| DO | DON'T |
+|----|-------|
+| Form your own hypothesis BEFORE asking Codex | Ask Codex first, then accept without question |
+| Do independent research to verify/challenge Codex | Use Codex's search results as final truth |
+| Present contradictory evidence you found | Echo Codex's conclusions without verification |
+| Question Codex when you disagree | Change your view just because Codex said so |
+| Synthesize both perspectives | Treat Codex as the authority |
+
+**If you find yourself just agreeing with Codex, you're doing it wrong.**
 
 ## Prerequisites
 
@@ -24,6 +40,30 @@ codex --version  # must be available
 
 All modes use `--sandbox read-only` to prevent Codex from modifying files.
 
+## Pre-Discussion Requirements
+
+Before writing Round 1, you MUST:
+
+1. **Form your own hypothesis** - What do YOU think the answer is?
+2. **Do initial research** - Search the web, read docs, gather evidence
+3. **Document your findings** - Write them in `round-1.md` under "My Initial Research"
+4. **Identify contradictions** - Note any conflicting evidence you found
+
+Example `round-1.md` structure:
+```markdown
+# [Topic]
+
+## My Initial Research
+[What I found BEFORE asking Codex - sources, evidence, my hypothesis]
+
+## Conflicting Evidence
+[Sources that disagree with each other - this is where discussion is valuable]
+
+## Questions for Codex
+1. [Specific question]
+2. [Specific question]
+```
+
 ## Workflow
 
 ### 1. Create discussion directory
@@ -32,7 +72,7 @@ All modes use `--sandbox read-only` to prevent Codex from modifying files.
 DISCUSS_DIR=$(mktemp -d /tmp/codex-discuss-XXXXXX)
 ```
 
-### 2. Prepare Round 1
+### 2. Prepare Round 1 (with your research)
 
 Write `$DISCUSS_DIR/round-1.md`:
 
@@ -41,6 +81,9 @@ Write `$DISCUSS_DIR/round-1.md`:
 
 ## Context
 [Concise background — what exists today, what problem we're solving]
+
+## My Initial Research
+[What YOU found before asking - include sources]
 
 ## Proposal
 [The specific design/code/decision under review]
@@ -56,11 +99,12 @@ Rules:
 - Use **absolute file paths** so Codex can read source code itself
 - Do NOT paste large code blocks — reference files instead
 - Do NOT reference files containing secrets or credentials
+- **MUST include your own research/hypothesis before asking**
 
 ### 3. Run Codex Round 1
 
 ```bash
-timeout 180 codex exec \
+timeout 300 codex exec \
   --sandbox read-only --skip-git-repo-check \
   -o "$DISCUSS_DIR/response-1.md" \
   "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
@@ -68,21 +112,31 @@ timeout 180 codex exec \
 
 After execution, verify:
 - Exit code is 0
-- `response-1.md` exists and is non-empty
+- `response-1.md` exists and non-empty
 
 If Codex fails or times out, note "Codex did not respond" and skip to step 6 with available information.
 
-### 4. Read response and decide
+### 4. Read response and INDEPENDENTLY evaluate
 
-Read `response-1.md`. One of three outcomes:
+**CRITICAL: Do NOT just accept Codex's answer.**
+
+Read `response-1.md` and ask yourself:
+
+1. **Does this match my research?** - If not, who's wrong?
+2. **Are there contradictions?** - Did Codex miss evidence I found?
+3. **Do I disagree?** - If yes, document WHY with evidence
+4. **What did Codex miss?** - Perspectives, edge cases, alternatives
+
+Then decide:
 
 | Outcome | Action |
 |---------|--------|
-| **Converged** — answers are clear, no disagreement | Go to step 6 (conclude) |
+| **Converged** — both agree, evidence supports it | Go to step 6 (conclude) |
 | **Needs clarification** — some points unclear | Write `round-2.md`, go to step 5 |
-| **Disagreement** — fundamentally different view | Write `round-2.md` stating your position, go to step 5 |
+| **Disagreement** — I have evidence contradicting Codex | Write `round-2.md` with MY position and evidence, go to step 5 |
+| **Codex missed something** — I found evidence Codex didn't | Write `round-2.md` presenting MY evidence, go to step 5 |
 
-### 5. Round 2 (and optional Round 3)
+### 5. Round 2 (and optional Round 3/4)
 
 Write `$DISCUSS_DIR/round-2.md`:
 
@@ -92,31 +146,46 @@ Write `$DISCUSS_DIR/round-2.md`:
 ## Codex R1 Summary
 [1-3 bullet summary of Codex's R1 position]
 
-## My Assessment
-[Where you agree/disagree and why]
+## My Assessment (CRITICAL - show your independent thinking)
+[Where you agree/disagree and WHY]
+[Evidence YOU found that supports or contradicts Codex]
 
-## Questions
-1. [Focused follow-up]
-2. [Focused follow-up]
+## Questions / Challenges
+1. [Focused follow-up or challenge]
+2. [Present contradictory evidence if any]
 ```
 
 Run Codex with previous context:
 
 ```bash
-timeout 180 codex exec \
+timeout 300 codex exec \
   --sandbox read-only --skip-git-repo-check \
   -o "$DISCUSS_DIR/response-2.md" \
   "{task_framing} Read $DISCUSS_DIR/round-1.md, $DISCUSS_DIR/response-1.md, and $DISCUSS_DIR/round-2.md for full context. Answer only the numbered questions in round-2.md. Do not edit files."
 ```
 
-**Round 3 rule**: Only if Round 2 has unresolved disagreement. Prompt must frame as tie-breaking:
+#### When to use Round 3 or 4
+
+**Default: Stop at Round 2.** Only continue if:
+
+| Scenario | Why more rounds needed |
+|----------|------------------------|
+| **Conflicting authoritative sources** | E.g., official docs say X, but release notes imply Y - need to dig deeper |
+| **Codex found evidence I missed** | I need to verify Codex's sources independently |
+| **Both parties found valid but contradictory evidence** | Need to determine which source is more authoritative |
+| **High-stakes decision with no clear answer** | When the decision has significant blast radius and evidence is ambiguous |
+| **Technical constraint discovery mid-discussion** | E.g., "API is Pro-only" contradicts "download page says it's included" |
+
+**Round 3/4 rule**: Must have genuine unresolved tension. Frame as resolution:
 
 ```bash
-timeout 180 codex exec \
+timeout 300 codex exec \
   --sandbox read-only --skip-git-repo-check \
   -o "$DISCUSS_DIR/response-3.md" \
-  "This is the final round. Read all files in $DISCUSS_DIR/ for context. Pick one option and justify. No new proposals. Do not edit files."
+  "This is round 3 of 4 max. Read all files in $DISCUSS_DIR/ for context. Address the specific contradiction: [describe]. Do not edit files."
 ```
+
+Round 4 is the absolute maximum. If no resolution, document the impasse.
 
 ### 6. Conclude
 
@@ -126,17 +195,43 @@ Format:
 ```markdown
 ### Codex Discussion Consensus ({date}, {rounds} rounds)
 - **Decision**: [what was decided]
+- **My position**: [what I initially thought]
+- **Codex's position**: [what Codex initially thought]
+- **Resolution**: [how we converged OR why we disagreed]
 - **Reasoning**: [1-2 sentences]
 - **Rejected alternatives**: [what was considered and why not]
+- **Key evidence**: [links/sources that were decisive]
 ```
 
 If Codex failed or gave no useful response, note that and proceed with your own judgment.
 
+## Challenge Protocol
+
+You MUST challenge Codex when:
+
+1. **Codex's answer contradicts your research** - Present your evidence
+2. **Codex cites sources you can't verify** - Ask for specifics or verify yourself
+3. **Codex's logic has gaps** - Point them out
+4. **You have domain knowledge Codex lacks** - Share it
+
+You should ACCEPT Codex's answer when:
+
+1. **Codex found evidence you missed** - But verify it independently
+2. **Codex's logic is sound AND you have no contradictory evidence**
+3. **Both your research and Codex's converge** - Good sign
+
 ## Anti-Patterns
 
+### Discussion Anti-Patterns (CRITICAL)
+- **Echo-chamber**: Writing "My Assessment" that just restates Codex's position
+- **Passive acceptance**: "Codex said X, so I'll update the plan" without verification
+- **Selective research**: Only searching for evidence that supports Codex's view
+- **Skipping your own research**: Going straight to Codex without forming a hypothesis
+
+### Process Anti-Patterns
 - Opening a round without specific numbered questions
 - Asking more than 5 questions per round
-- Going to Round 3 without genuine disagreement from Round 2
+- Going to Round 3/4 without genuine unresolved tension
 - Leaving conclusions in temp dir without writing to target document
 - Using for simple factual lookups (use web search instead)
 - Re-running rounds hoping for a different answer
@@ -152,8 +247,10 @@ Proactively suggest when:
 - You're about to add significant complexity to a system
 - The user asks "what do you think about X" for architectural questions
 - A code review would benefit from an independent perspective
+- You've done research but found conflicting evidence
 
 Do NOT suggest when:
 - The task is straightforward implementation
 - The question is factual (use web search)
 - The user has already decided and just wants execution
+- You haven't done any independent research yet
