@@ -59,6 +59,28 @@ git diff --name-only <target_sha>..<source_sha>
 git diff <target_sha>..<source_sha> -- path/to/file
 ```
 
+### Stage 2.5: Source-of-Truth Discipline (Must Follow for Entire Review)
+
+After SHAs are locked, treat the compared commits as the **only source of truth** for review findings.
+
+1. Use only these sources when forming findings:
+   - `git diff <target_sha>..<source_sha> ...`
+   - `git show <source_sha>:path/to/file`
+   - `git show <target_sha>:path/to/file`
+2. Do **not** use current working tree file contents as evidence for findings unless the user explicitly asks to review local workspace state.
+3. If working tree contents differ from locked SHAs, ignore the working tree and continue using the locked SHAs.
+4. When citing line numbers or snippets, ensure they come from the locked commit content, not from an edited local file.
+
+Recommended commands:
+
+```bash
+# Read source-branch file content at locked SHA
+git show <source_sha>:path/to/file
+
+# Read target-branch file content at locked SHA
+git show <target_sha>:path/to/file
+```
+
 ### Stage 3: Load Just-Enough Context (Support Only)
 
 Load only context needed to understand changed behavior:
@@ -127,6 +149,14 @@ If issue is outside diff but found while tracing impact, label explicitly:
 
 If user challenges line numbers, re-check against locked SHAs and re-print code context.
 
+### Stage 5.5: Pre-Report Consistency Check
+
+Before sending findings, verify:
+
+1. Every cited snippet and line reference came from locked SHA content.
+2. No finding relies on current working tree state unless scope was explicitly overridden.
+3. If local files were read for convenience, re-confirm each merge-blocking finding against `git show <sha>:...` before reporting it.
+
 ## Risk Assessment
 
 Provide a clear assessment at the end:
@@ -155,6 +185,7 @@ Provide actionable items:
 8. **Prioritize**: Focus on important issues over minor nits
 9. **Call Out Scope Changes**: If user asks for full-repo audit, acknowledge scope expansion
 10. **Skip Compile Verification by Default**: Treat build/run checks as out of scope unless explicitly requested
+11. **Locked SHA Is Authoritative**: For branch reviews, never let current working tree contents override the locked commit scope
 
 ## Tools Used
 
