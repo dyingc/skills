@@ -44,6 +44,46 @@ Paper Tutor uses a **swarm of specialized agents** to transform complex academic
 
 ---
 
+## Non-negotiable Multi-modal Rules
+
+**These rules exist because past runs produced (a) text-only walls of description that failed to teach figures and formulas, and (b) figure-centric "museum tours" where every `####` heading was the name of a figure. They are enforced by the validator and the Editor-in-Chief.**
+
+0. **Teaching philosophy: concept-first, not figure-first.** This is the most important rule and it dominates all others.
+   - **Your chapter teaches propositions, not figures.** A proposition is a question (e.g. "为什么单纯 fuzzing 会卡在 magic check 上？") or a claim (e.g. "Driller 的一次完整循环是 fuzzer → concolic → fuzzer → concolic..."). Figures, tables, listings, and formulas are *supporting evidence* for propositions, not subjects of explanation.
+   - **Every `####` heading must be a proposition**, not a figure name. Before writing any `####` heading, ask: "If I only show the reader this title, can they infer what question I am going to answer?" If the title is `#### 概念 3：Venn 图（Figure 5）`, the reader only learns "he's going to describe a figure" — this is a hard-fail.
+   - **Hard-fail regex**: `####` headings that match `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+` (including inside parentheses) are rejected by the Editor-in-Chief and by `validate_execution.py`.
+   - **2+ figures supporting one proposition live in the SAME `####` section**, bound by narrative hinges ("此时", "然而", "到这里"), not in 2+ separate `####` sections. See `references/multimodal-content.md` Example 0 for the primary pattern.
+   - **One figure → one proposition is OK only when that figure single-handedly answers one question.** But if your chapter has 4+ figures, you almost certainly should NOT have 4+ separate `####` sections.
+   - **Common rationalizations that mean you are violating this rule** (call yourself out):
+     - "This figure is so important it deserves its own section." → No. Its own *narrative paragraph* in an existing proposition, yes.
+     - "The 4 figures each show a different step, so they need 4 sections." → No. A 4-step process IS the proposition; weave all 4 figures into one section.
+     - "The reader needs to see each figure separately." → They will. Separation is done by narrative paragraphs, not `####` headings.
+
+1. **Figures are the soul of a paper — they MUST render, not be described.**
+   - Every figure (Figure N / Table N / Listing N) extracted by `extract_figures.py` MUST appear as `![caption](figures/<filename>)` markdown in at least one chapter file, positioned at or near the text that discusses it.
+   - **Forbidden**: dumping all figures into a single "figure index table", listing them only by filename in an appendix, or writing "see Figure 3 at page 5" without actually rendering the image.
+   - **Forbidden path prefixes**: `../figures/`, absolute paths, external URLs. The ONLY allowed path is `figures/<filename>` (relative to the chapter file) or normalized to `figures/<filename>` during final merge.
+   - Every embedded figure MUST be embedded INSIDE a proposition's narrative (not as its own `####`). The surrounding narrative must be at least 150 Chinese characters, **written as flowing prose** (not as a `**什么要看** / **结构** / **观察**` bullet list) that dissolves the `level2_breakdown` fields into the argument. A single caption line is NOT enough. A bullet list of level2_breakdown fields is also NOT enough — the test is whether the narrative reads as a continuous argument for the proposition.
+
+2. **Formulas must render as LaTeX, not prose.**
+   - Inline math: wrap the expression in single dollar signs (`\$expr\$`).
+   - Display math: wrap the expression in double dollar signs (`\$\$expr\$\$`) on its own block.
+   - Every non-trivial symbol must be named. Every bound/limit must be explained.
+   - **Forbidden**: rendering formulas as plain text (e.g. "f(x) = sum from i=1 to n of x_i") or as screenshot images when LaTeX is possible.
+   - If the paper contains no formulas, this rule is inert — do not fabricate formulas just to satisfy it.
+   - Full example: see `references/multimodal-content.md`.
+
+3. **Tables from the paper are figures.**
+   - `extract_figures.py` emits tables under `figures/table_*.png`. They follow the same embedding rules as figures.
+   - Do NOT re-type the table data into a markdown table instead of embedding the rendered image unless the table is small (≤ 5 rows) AND you add a separate teaching paragraph.
+
+4. **Code listings follow the same ownership rules as figures.**
+   - Listings extracted to `listings/listing_*.txt` should be embedded as fenced code blocks (` ```c ` / ` ```python ` etc.) close to the related concept.
+
+**Agents that violate these rules will have their chapters rejected by the Editor-in-Chief regardless of text quality.**
+
+---
+
 ## Workflow Overview
 
 ```
@@ -198,26 +238,32 @@ For each chapter:
 **Prerequisite**: Pre-Step A dependency check passed.
 
 ```bash
-python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]/figures/
+python ~/.claude/skills/paper-tutor/scripts/extract_figures.py [PDF_PATH] -o [OUTPUT_DIR]
 ```
+
+**Important**: `-o` must point to the OUTPUT ROOT, not to `[OUTPUT_DIR]/figures/`. The script creates `figures/` and `listings/` as subdirectories inside the root. Passing `figures/` as `-o` will produce a nested `figures/figures/` path that breaks all chapter agents.
 
 ### Step 2.2: Launch Figure Analyst Agent
 
-**CRITICAL**: Figure Analyst is the ONLY agent allowed to write `level1_summary`.
+**CRITICAL**: Figure Analyst is the ONLY agent allowed to write `level1_summary`, `level2_breakdown`, and `belongs_to_chapter`.
 
 Launch via Task tool:
 
 ```
-你是 Paper Tutor 的 Figure Analyst，专门负责论文图片分析。
+你是 Paper Tutor 的 Figure Analyst，专门负责论文图片分析与归属分配。
 
 ## 你的任务
 
-分析 `[OUTPUT_DIR]/figures/` 中的所有图片。
+1. 分析 `[OUTPUT_DIR]/figures/` 中的所有图片 / 表格 / Listing
+2. 为每个图片生成 Level 1 summary（简短描述）和 Level 2 breakdown（教学级讲解）
+3. 根据 `paper_metadata.json.chapters[]` 的章节划分，为每张图分配 `belongs_to_chapter`
 
 ## 工具选择
 
-1. 首先尝试使用 Read 工具读取图片（Read 工具支持图片）
-2. 如果 Read 工具无法正确描述图片，标记 image_analysis.status = "unavailable"
+1. 首先使用 Read 工具读取图片（Read 工具支持图片的多模态理解）
+2. 同时阅读 `[OUTPUT_DIR]/figures/extraction_index.json` 获取原始 caption 文本和页码
+3. 同时阅读 `[OUTPUT_DIR]/paper_metadata.json.chapters[]` 了解章节范围
+4. 如果 Read 工具无法正确描述图片，设置 `image_analysis.status = "unavailable"`
 
 ## 输出要求
 
@@ -228,17 +274,30 @@ Launch via Task tool:
   "image_analysis": {
     "status": "available|unavailable",
     "method": "read_tool_multimodal",
-    "analyzed_at": "2026-02-25T10:00:00Z"
+    "analyzed_at": "2026-04-08T10:00:00Z"
   },
   "figures": [
     {
-      "file": "fig_xxx.png",
-      "page": 3,
-      "level1_summary": "1-2句话的图片描述...",
-      "figure_type": "architecture_diagram|chart|table|visualization|formula|other",
+      "file": "figure_3_097f3eb1.png",
+      "page": 5,
+      "figure_number": "Figure 3",
+      "caption": "原始 caption 文本（来自 extraction_index.json）",
+      "belongs_to_chapter": "ch2",
+      "level1_summary": "1-2 句中文摘要，说明这张图整体在讲什么、是什么类型（架构图 / 折线图 / 状态机 / 表格 / 代码清单）",
+      "level2_breakdown": {
+        "what_to_look_at": "读者进入这张图应优先关注的视觉焦点（例如：左上角的输入节点、红色高亮路径、Y 轴刻度）",
+        "axes_or_structure": "坐标轴 / 图例 / 节点类型 / 列的含义；表格要列出各列语义",
+        "key_observations": [
+          "观察点 1：最显著的数据模式或结构特征",
+          "观察点 2：次要但有教学价值的细节",
+          "观察点 3：与其他图的对比或联系"
+        ],
+        "teaching_hook": "把这张图和章节核心概念连起来的一句话（给 Chapter Agent 使用）"
+      },
+      "figure_type": "architecture_diagram|chart|table|listing|state_machine|visualization|other",
       "key_elements": ["element1", "element2"],
       "analyzed_by": "figure_analyst_agent",
-      "analyzed_at": "2026-02-25T10:00:00Z",
+      "analyzed_at": "2026-04-08T10:00:00Z",
       "analysis_method": "read_tool_multimodal",
       "status": "analyzed"
     }
@@ -248,18 +307,37 @@ Launch via Task tool:
 
 ## 关键约束
 
-1. **必须包含签名字段**：
-   - analyzed_by: 必须是 "figure_analyst_agent"
-   - analyzed_at: ISO 8601 时间戳
-   - analysis_method: 使用的分析方法
+1. **必须包含签名字段**（每个 figures[] 项）：
+   - `analyzed_by`: 必须是 `"figure_analyst_agent"`
+   - `analyzed_at`: ISO 8601 时间戳
+   - `analysis_method`: 使用的分析方法
 
-2. **如果无法分析**：
-   - 设置 image_analysis.status = "unavailable"
+2. **必须填写 `belongs_to_chapter`**：
+   - 根据 `paper_metadata.json.chapters[]` 的 `id`（如 `ch1`, `ch2`）分配
+   - 分配规则：图所在 PDF 页码落在哪个章节的正文范围内，就归属那个章节
+   - 一个图**只能归属一个章节**；若正文在多个章节都引用，归属第一次讲解它的章节
+   - **禁止**出现 `belongs_to_chapter: null`（除非整本论文只有 1 个章节）
+
+3. **必须填写 `level2_breakdown`**：
+   - Level 2 是 Chapter Agent 真正使用的讲解素材
+   - 必须同时包含 `what_to_look_at`、`axes_or_structure`、`key_observations`、`teaching_hook`
+   - 对代码 Listing：`axes_or_structure` 改为描述代码结构 / 关键行含义
+   - 对表格：`axes_or_structure` 必须列出所有列的语义
+
+4. **Listing 也要分析**：
+   - `extract_figures.py` 会把代码清单存到 `listings/listing_*.txt`
+   - Figure Analyst 同样要为这些 Listing 创建 figures[] 条目（`figure_type: "listing"`）
+   - `file` 字段写对应的 `.txt` 路径（相对 OUTPUT_DIR）
+
+5. **如果无法分析图片**：
+   - 设置 `image_analysis.status = "unavailable"`
    - figures 数组留空
+   - 但在 status 消息中说明具体原因
 
-3. **Better no display than wrong**：
+6. **Better no display than wrong**：
    - 不确定时跳过该图片
-   - 不编造图片内容
+   - 绝不编造图片内容
+   - 发现图片渲染不完整（被截断、空白、重复）时，在 `status` 字段写 `"render_issue"` 并跳过
 ```
 
 ### Figure Analysis Signature Enforcement
@@ -315,22 +393,77 @@ Launch N chapter agents simultaneously based on intensity level.
 
 从 PDF 中读取「{SECTION_NAME}」的完整内容。
 
-### 4. 识别并讲解核心概念
+### 4. 先写命题清单（concept-first 的入口 - 不可跳过）
 
-对于每个核心概念：
-- 检查 concept_coverage_map 中是否已被其他 agent 覆盖
-- 如果已覆盖，决定是引用还是协商归属
-- 如果未覆盖，进行讲解并更新 concept_coverage_map
+**这一步是整章写作的起点，也是最容易被跳过的一步。跳过这一步就会退化为 figure-centric 输出。**
 
-### 5. 选择并嵌入图片
+1. 打开一个临时记事区（可以是 shared_memory 的 scratch 字段，也可以只是你脑内的列表），写出本章要论证的 **3–8 个命题**。
+2. 每个命题都是**一个问题或一个陈述句**，不是一个图/表/清单的名字。
 
-如果 image_analysis.status == "available"：
-- 根据 level1_summary 选择相关图片
-- 嵌入图片到讲解中
-- **不要自己分析图片**，直接使用 Figure Analyst 提供的 level1_summary
+   **好的命题示例**（来自 Driller 论文）：
+   - "为什么单纯 fuzzing 会卡在 magic check 上？"
+   - "Driller 的一次完整循环是 fuzzer → concolic → fuzzer → concolic..."
+   - "Concolic 为什么必须是 _selective_ 的？全量符号执行不行吗？"
+   - "Driller 相比单独 fuzzing / 单独 symex 的增益是多少？凭什么？"
 
-如果 image_analysis.status != "available"：
-- 完全跳过图片，仅使用文字讲解
+   **坏的命题示例**（这些是 figure-centric 失败模式，会被 Editor-in-Chief 驳回）：
+   - "概念 3：Venn 图（Figure 5）" ← 不是命题，是图的名字
+   - "Listing 7-10 的案例研究" ← 不是命题，是一次导览
+   - "Table I 的内容" ← 不是命题，是对表的描述
+
+3. 每个命题成为本章的一个 `#### ...` 小节。**`####` 的标题就是这个问题或陈述，不是"概念 3"+"某张图的名字"**。
+
+4. **硬性约束**：`#### ...` 标题里**禁止**出现下列字面字符串（括号内也禁止）：
+   - `Figure \d+` 或 `图 \d+`
+   - `Table [IVX]+` 或 `表 [IVX]+`
+   - `Listing \d+` 或 `清单 \d+`
+
+   违反即被 validator 和 Editor-in-Chief 立即驳回。
+
+5. 检查 `concept_coverage_map`：如果某个命题所涉及的概念已被其他 agent 覆盖，决定是引用还是协商归属。
+
+### 5. 把命题映射到支撑证据（图、表、公式、代码、文字）
+
+**核心原则**：图是命题的证据，不是命题本身。
+
+1. 从 `paper_metadata.json.figures[]` 筛选所有 `belongs_to_chapter == 本章 id` 的条目。把它们记作 `my_figures`。
+2. **把 `my_figures` 分配给你上一步写好的命题**：
+
+   ```
+   命题 A: "为什么单纯 fuzzing 会卡在 magic check 上？"
+     证据: Listing 1 + Figure 1 (CFG)
+   命题 B: "Driller 的一次完整循环是怎么跑的？"
+     证据: Figure 1 → Figure 2 → Figure 3 → Figure 4 (四张图穿成一条时间线)
+   命题 C: "Concolic 只在 fuzzer 卡住时介入，代价和收益分别是什么？"
+     证据: Figure 6 (介入时间线) + Figure 7 (调用次数分布)
+   命题 D: "Driller 比单独 fuzzing 多找到多少 crash？"
+     证据: Table II (crash 数字) + Figure 5 (Venn 图)
+   ```
+
+3. **分配规则**：
+   - 每张图必须被**至少一个命题**消费（完全没被任何命题用到的图是 orphan figure，向 Editor-in-Chief 报告）。
+   - 每张图**只能在一个命题里"主讲"**（可以在其他命题里被简短回顾引用，但主讲只有一次）。
+   - 一个命题可以消费 0 / 1 / 2+ 张图。0 张图也 OK —— 不是每个命题都需要图。
+   - **避免 figure-centric 陷阱**：如果你发现每个命题都只消费 1 张图、且命题数 == 图数，请重新审视你的命题——你很可能把"图的名字"当成了命题。
+   - **推荐**：多张图连续支撑一个命题时（例如"一次循环"），它们应该进入**同一个 `####` 小节**，用连接词（"此时"、"然而"、"到这里"）串起来。
+
+4. **嵌入规则（对每个命题的每个证据）**：
+
+   - **图**：用 `![caption](figures/<filename>)` 真实渲染，路径必须是 `figures/<filename>`（禁止 `../figures/` / 绝对路径 / URL）。
+   - **每张图前后**必须有连贯的中文叙事段落（≥150 字），把 `level2_breakdown` 的四个字段 (`what_to_look_at`, `axes_or_structure`, `key_observations`, `teaching_hook`) **融进命题的论证里**——不是列成四条小标题，不是列成四个 bullet，不是贴一段 level1_summary。测试方法：连读这段叙事，它应该像一段完整的议论，而不是四个并列的"说明文"。
+   - **多张图共讲一个命题**：在同一个 `####` 小节里，用"一开始"、"此时"、"但随后"、"到这里"这种时间/逻辑连接词把多张图绑成一条叙事线。**禁止**在同一个命题内部加二级小标题把证据拆开。
+   - **公式**：行内用 `\$expr\$`，块级用 `\$\$expr\$\$`。每个符号必须在公式后立即说明含义。公式必须作为某个命题的证据出现，而不是单独的 `#### 公式 X` 小节。
+   - **Listing**：读取 `listings/listing_*.txt`，以 fenced code block（```` ```c ````、```` ```python ```` 等）嵌入到对应命题里，前后配叙事说明它作为证据支撑了哪个命题。
+   - **表格**：要么嵌入 `figures/table_*.png`，要么重打成小型 markdown 表（≤5 行且有教学段落）。表格同样作为证据进入某个命题的 `####`，不是独立的 `#### 表 X` 小节。
+
+5. **禁止自己重新分析图片**：直接使用 Figure Analyst 写好的 `level1_summary` 和 `level2_breakdown`。如果发现分析有误，在 `communication.directed` 中给 `figure_analyst_agent` 发消息。
+
+6. **详细范例**：写之前先读 [references/multimodal-content.md](references/multimodal-content.md) 的 **Example 0**（primary pattern: 一个命题 4 张图），以及 Example 1（edge case: 一个命题 1 张图）。
+
+**如果 `image_analysis.status != "available"`**：
+- 跳过图片嵌入
+- 但在每个缺图的位置用 Mermaid 重建对应结构，并在正文加脚注：`> 原图未能提取，此处用 Mermaid 重建以帮助理解。`
+- 命题仍然要按 concept-first 的方式写，证据变成 Mermaid + 原文引用。
 
 ### 6. 更新共享内存
 
@@ -347,16 +480,25 @@ Launch N chapter agents simultaneously based on intensity level.
 
 - 强度级别：{INTENSITY}
 - 目标字数：{TARGET_WORDS}
-- 每个概念需要：通俗讲解、可视化（Mermaid）、举例说明
-- 图片嵌入到相关概念中
 - 章节输出必须包含：
   - `### 📚 前置知识`
-  - 至少 3 个 `#### 概念：...` 小节
-  - 每个概念小节至少包含：`原文定义`、`通俗讲解`、`为什么需要这个概念`、`举例说明`
-  - 若章节含公式：至少 1 个公式使用 [references/formula-template.md](references/formula-template.md) 的简化模板讲解
+  - **3–8 个 `#### ...` 命题小节**（每个标题是一个问题或陈述，不是图/表/清单的名字）
+  - 每个命题小节的论证结构：`原文依据` / `通俗讲解` / `为什么这个命题成立` / `举例或证据`
+  - 若章节含公式：至少 1 个公式用 LaTeX 渲染，作为某个命题的证据（参见 [references/formula-template.md](references/formula-template.md)）
+- **Concept-first 硬性要求（违反任一项即被 Editor-in-Chief 驳回）**：
+  1. **`####` 标题必须是命题**：每个 `####` 是一个问题或陈述句，**禁止**包含 `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+`（括号内也禁止）。
+  2. **图是命题的证据，不是命题本身**：多张图支撑同一命题时，它们进入**同一个 `####` 小节**，用连接词（"此时"、"然而"、"到这里"）串成一条叙事线；**禁止**把它们拆成多个 `####`。
+  3. **自检 grep**：写完后自己跑一次 `grep -nE '^#{3,4}\s.*(Figure\s*[0-9]|Table\s+[IVXLCDM]|Listing\s*[0-9]|图\s*[0-9]|表\s*[IVXLCDM0-9]|清单\s*[0-9])' chapters/chapter_XX_output.md`，结果必须为空。
+- **多模态硬性要求（违反任一项即被 Editor-in-Chief 驳回）**：
+  1. **所有归属本章的图都必须真实嵌入**：每张 `paper_metadata.json.figures[]` 中 `belongs_to_chapter == 本章 id` 的图，都必须用 `![caption](figures/<filename>)` 语法写入章节文件。仅文字提到 "如图所示" 不算嵌入。
+  2. **路径格式**：必须是 `figures/<filename>`（章节文件相对路径），禁止 `../figures/`、绝对路径或 URL。
+  3. **图周边叙事**：每张嵌入图前后必须有 ≥150 字的**连贯中文叙事**（不是 bullet list，不是四个小标题），把 `level2_breakdown` 的 what_to_look_at / axes_or_structure / key_observations / teaching_hook 四项**融进命题的论证里**。测试方法：连读这段叙事，它应该像一段议论，而不是四个并列的说明文。
+  4. **公式用 LaTeX**：所有公式必须用单美元符号（行内）或双美元符号（块级）包围；每个符号必须在公式后立即说明含义；禁止纯文本公式（例如 "sum from i=1 to n of x_i"）。
+  5. **Listing 用代码块**：`figure_type == "listing"` 的条目必须读取 `listings/listing_*.txt` 并以 fenced code block（```` ```c ````、```` ```python ```` 等）嵌入到对应命题里，前后配叙事说明它是哪个命题的证据。
 - 章节输出质量下限（硬性）：
   - 内容单位（中文字符 + 英文词）必须 >= `max(180, 0.35 * TARGET_WORDS)`
   - 低于下限时不得提交 `pending_review`
+- **必读范例**：[references/multimodal-content.md](references/multimodal-content.md) 的 **Example 0** 展示了"一个命题 4 张图"的主 pattern，Example 1 展示了"一个命题 1 张图"的边缘情况。写章节之前**必须**读 Example 0。
 
 ## 完成后
 
@@ -438,11 +580,19 @@ total_score = (accuracy + clarity + completeness + consistency + word_count) / 5
 
 - **score >= 4.0**: approved
 - **score < 4.0**: needs_revision（返回修改意见给 Chapter Agent）
-- **硬性否决条件（任一命中即 needs_revision）**：
-  - 章节未满足最小内容单位阈值（`max(180, 0.35 * word_count_target)`）
-  - 缺少 `前置知识` 或核心概念小节数 < 3
-  - 章节包含图片但未使用 `paper_metadata.json.figures[].level1_summary` 进行解读
-  - 出现新增编号章节（如“第七章”）但未在 `shared_memory.chapter_summaries` 中注册并通过审核
+- **硬性否决条件（任一命中即 needs_revision，总分重算为 <= 3.0）**：
+  1. 章节未满足最小内容单位阈值（`max(180, 0.35 * word_count_target)`）
+  2. 缺少 `### 📚 前置知识` 或核心命题小节数 < 3
+  3. **Concept-first 违规（最严重）**：章节中存在 `#### ...` 标题匹配正则 `(Figure\s*\d|Table\s+[IVX]|Listing\s*\d|图\s*\d|表\s*[IVX0-9]|清单\s*\d)`，即便在括号里也不行。这说明 agent 把"图的名字"当成了命题，是整个多模态流水线的最主要失败模式。示例：`#### 概念 3：Venn 图（Figure 5）` / `#### State Transition Breakdown (Table I)` / `#### Listing 7-10 的案例研究` — 全部驳回。
+  4. **Figure-centric 结构**：`#### ...` 小节数 >= 章节图数 且每个小节恰好包含一张图。这是"one figure = one section"反模式的信号。正确做法是把多张图织进更少的命题小节。
+  5. **叙事融合不合格**：嵌入图后的 150 字区间里出现 `**什么要看** / **结构** / **观察** / **教学钩**` 这类四字标签列表或 bullet list（把 `level2_breakdown` 硬塞成四个子标题）。必须是连贯的议论叙事。
+  6. **图片未全部嵌入**：`paper_metadata.json.figures[]` 中存在 `belongs_to_chapter == 本章 id` 的条目，但该图的文件名没有出现在 `![...](figures/<filename>)` 的 Markdown 图片语法中
+  7. **图片路径非法**：章节文件出现 `../figures/`、绝对路径、`http://...` 或 `https://...` 的图片路径
+  8. **图片缺少讲解**：嵌入图片前后 150 字内没有真实的教学段落（只有 caption 或一句话引用）
+  9. **图片只在附录列名**：章节把图都堆到 "论文原图索引" 这样的表格里，而不是嵌入正文
+  10. **公式非 LaTeX**：章节内出现看起来像公式的内容（含 `=`、`sum`、`int`、`sqrt`、希腊字母等），但未用 LaTeX 定界符（`\$...\$` 或 `\$\$...\$\$`）渲染
+  11. **Listing 未渲染**：figures[] 有 `figure_type == "listing"` 条目，但对应代码未在章节中以 fenced code block 出现
+  12. 出现新增编号章节（如"第七章"）但未在 `shared_memory.chapter_summaries` 中注册并通过审核
 
 ## 如果需要修改
 
@@ -482,7 +632,7 @@ When Agent A finds a concept already claimed by Agent B:
 
 After ALL chapters are approved (score >= 4.0), generate `paper_explanation.md`.
 
-**CRITICAL merge rule**:
+**CRITICAL merge rules**:
 
 1. Final document chapters must be merged from approved `chapters/chapter_{XX}_output.md` only.
 2. Chapter count/order must exactly match:
@@ -490,6 +640,13 @@ After ALL chapters are approved (score >= 4.0), generate `paper_explanation.md`.
    - `shared_memory.json.chapter_summaries`
 3. Do NOT create new numbered chapters during merge.
    - If you want to add practice notes or implementation tips, put them in `附录` sections (not `第X章`).
+4. **Heading demotion**: Chapter agents write `# 第N章...` as H1 at top of their output files. The final `paper_explanation.md` MUST demote them to `## 第N章...` (H2) so the validator counts them correctly.
+5. **Figure path normalization (CRITICAL)**: Chapter files live in `chapters/` subdirectory so agents may have written `![...](figures/foo.png)` or `![...](../figures/foo.png)`. The final `paper_explanation.md` lives in the output root, so all figure paths must become `figures/foo.png`:
+   - Accept: `figures/foo.png` → keep as `figures/foo.png`
+   - Rewrite: `../figures/foo.png` → `figures/foo.png`
+   - Reject: any absolute path or URL (fail the merge, do not substitute)
+6. **Figure embed audit during merge**: For every `figures[]` entry in `paper_metadata.json`, the merged `paper_explanation.md` must contain at least one `![...](figures/<filename>)` line. If any figure file is missing, abort the merge and send back to the owning Chapter Agent.
+7. **Implementation**: The merge step should be done by a Python script (not a raw Bash `cat` pipeline), so that the normalization and audit run atomically. See `scripts/merge_chapters.py` (if present) or inline a short Python snippet via the Bash tool.
 
 **Output structure**:
 
@@ -556,11 +713,14 @@ python ~/.claude/skills/paper-tutor/scripts/validate_execution.py [OUTPUT_DIR]
 
 ### Validation Checks
 
-1. **Figure Analysis Signature**
+1. **Figure Analysis Signature** (HARD)
    - Every figure with `level1_summary` must have `analyzed_by: "figure_analyst_agent"`
-   - Missing signature = validation failure
+   - Every figure must have `analyzed_at`, `analysis_method`
+   - Every figure must have `belongs_to_chapter` (non-null, matching a real chapter id)
+   - Every figure must have `level2_breakdown` with all four sub-fields: `what_to_look_at`, `axes_or_structure`, `key_observations`, `teaching_hook`
+   - Any missing field = validation failure
 
-2. **Chapter Review Approval**
+2. **Chapter Review Approval** (HARD)
    - Every chapter must have `status: "approved"`
    - Every chapter must have `review_score >= 4.0`
    - Every chapter must have `reviewer: "editor_in_chief"`
@@ -570,12 +730,23 @@ python ~/.claude/skills/paper-tutor/scripts/validate_execution.py [OUTPUT_DIR]
    - paper_metadata.json exists
    - shared_memory.json exists
 
-4. **Content Validation**
-   - Figures in metadata are referenced in explanation
+4. **Multi-modal Content Validation** (HARD)
+   - For each chapter file: every figure with `belongs_to_chapter == ch_id` must be rendered as `![...](figures/<filename>)` in that chapter file
+   - For paper_explanation.md: every figure in `figures[]` must be rendered as `![...](figures/<filename>)` (mentioning the filename in an index table is NOT enough)
+   - No chapter file or paper_explanation.md may contain `../figures/`, absolute paths, or `http(s)://` URL image references
+   - Each embedded figure must have ≥150 content units (chinese_chars + english_words) of teaching text immediately after, before the next image / heading / 40-line cap
+   - If a figure has `figure_type == "listing"`, the owning chapter file must contain at least one fenced code block (```` ``` ````)
+
+4.5. **Concept-first Heading Validation** (HARD — newest check)
+   - Every `####` (level-4) heading in each chapter file must NOT contain `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+`, even inside parentheses.
+   - Example hard-fail: `#### 概念 3：Venn 图（Figure 5）`, `#### Listing 7-10 的案例研究`, `#### State Transition Breakdown (Table I)`.
+   - Rationale: figure-named headings are the #1 symptom of "museum-tour" chapters where the author walks through figures one by one instead of arguing propositions.
+   - Fix: rewrite the heading as a question or claim, and weave the figure(s) into the narrative as supporting evidence (see `references/multimodal-content.md` Example 0).
 
 5. **Chapter Consistency**
    - Chapter counts in metadata/shared_memory/chapter files/final explanation must match
    - No extra numbered chapters in final explanation
+   - Chapter headings in paper_explanation.md are H2 (`## 第N章`), not H1 (raw H1 = merge step forgot to demote)
 
 6. **Chapter Coverage Floor**
    - Each chapter output must satisfy minimum content units:
@@ -590,27 +761,54 @@ Paper Tutor Execution Validation Report
 ============================================================
 
 Output Directory: /path/to/output
-Validated At: 2026-02-25T10:30:00Z
+Validated At: 2026-04-09T10:30:00Z
 
-Overall Status: ✅ PASSED / ❌ FAILED
+Overall Status: ✅ PASSED
 ------------------------------------------------------------
 
 ✅ Required Files:
-   - All required files exist
 
 ✅ Figure Analysis:
-   - Figures analyzed: 4
+   - Figures analyzed: 10
    - Image analysis status: available
-   - All figures have valid signatures
 
 ✅ Chapter Reviews:
-   - Chapters reviewed: 3
-   - All chapters approved with score >= 4.0
+   - Chapters reviewed: 6
+
+✅ Schema Alignment:
+
+✅ Chapter Outputs:
+   - Chapter coverage snapshot:
+     * ch1 (chapter_01_output.md): 5657 units (min 1575, target 4500)
+     ...
 
 ✅ Explanation Content:
-   - All figures referenced in explanation
+   - Numbered chapters in final doc: 6 (expected 6)
+
+✅ Multimodal Content:
+   - Figures: 10 total, 10 assigned to chapters, 0 unassigned
+   - paper_explanation.md rendered figures: 10 / 10
+     ✓ ch1 (chapter_01_output.md): 1/1 assigned figures embedded (1 total image refs)
+     ✓ ch2 (chapter_02_output.md): 3/3 assigned figures embedded (3 total image refs)
+     ✓ ch3 (chapter_03_output.md): 1/1 assigned figures embedded (1 total image refs)
+     ✓ ch4 (chapter_04_output.md): 1/1 assigned figures embedded (1 total image refs)
+     ✓ ch5 (chapter_05_output.md): 4/4 assigned figures embedded (4 total image refs)
+     ✓ ch6 (chapter_06_output.md): 0/0 assigned figures embedded (0 total image refs)
 
 ============================================================
+```
+
+A failing run produces, e.g.:
+
+```
+❌ Multimodal Content:
+   - Figures: 10 total, 0 assigned to chapters, 10 unassigned
+   - paper_explanation.md rendered figures: 0 / 10
+   ❌ Chapter 'ch5' (chapter_05_output.md): image path uses '../' prefix:
+      '../figures/fig_10_0_eafd7f31.png'. Chapter files must use 'figures/<filename>'.
+   ❌ paper_explanation.md: figure 'fig_10_0_eafd7f31.png' is in metadata but NOT
+      embedded via ![...](figures/fig_10_0_eafd7f31.png) markdown image syntax.
+      Mentioning the filename in an index table is not enough.
 ```
 
 ---
@@ -676,6 +874,7 @@ Overall Status: ✅ PASSED / ❌ FAILED
 - **Shared memory schema**: [references/shared-memory-schema.md](references/shared-memory-schema.md)
 - **Chapter agent workflow**: [references/chapter-agent-workflow.md](references/chapter-agent-workflow.md)
 - **Formula explanation template**: [references/formula-template.md](references/formula-template.md)
+- **Multi-modal content golden examples**: [references/multimodal-content.md](references/multimodal-content.md) — shows the correct shape of a figure-teaching paragraph, a LaTeX formula breakdown, and a Listing embed. Every Chapter Agent MUST read this before writing.
 
 ---
 

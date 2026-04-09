@@ -21,6 +21,100 @@ from typing import Tuple, List, Dict, Any, Optional
 
 MIN_CHAPTER_CONTENT_UNITS = 180
 MIN_CHAPTER_COVERAGE_RATIO = 0.35
+MIN_FIGURE_TEACHING_UNITS = 150
+
+# Regex: markdown image reference ![alt](path)
+MD_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<path>[^)]+)\)")
+
+# Regex: numbered chapter heading (H1 or H2) used to segment chapter bodies inside
+# the merged paper_explanation.md.
+NUMBERED_CHAPTER_HEADING_RE = re.compile(
+    r"^(#{1,3})\s+第[一二三四五六七八九十百]+章",
+    flags=re.MULTILINE,
+)
+
+# Regex: level-3 or level-4 markdown heading (### or ####). We match the heading
+# text on the same line so we can check whether it names a figure/table/listing.
+HEADING_LEVEL_3_OR_4_RE = re.compile(
+    r"^(#{3,4})\s+(.+?)\s*$",
+    flags=re.MULTILINE,
+)
+
+# Regex: forbidden figure-centric tokens inside a concept heading. If any of these
+# appear in a ###/#### heading, it means the author turned the heading into a
+# figure name instead of a proposition. This is the most common failure mode of
+# the multi-modal chapter agents.
+FORBIDDEN_HEADING_TOKENS_RE = re.compile(
+    r"""(
+        Figure\s*\d+                             # Figure 1, Figure 10
+        | Fig\.\s*\d+                             # Fig. 1
+        | Table\s+[IVXLCDM]+\b                    # Table I, Table IX (roman)
+        | Table\s+\d+                             # Table 1, Table 10
+        | Listing\s*\d+                           # Listing 1, Listing 10
+        | 图\s*[0-9]+                             # 图 1, 图10
+        | 图\s*[一二三四五六七八九十]+              # 图一, 图五
+        | 表\s*[IVXLCDM]+\b                       # 表 I, 表 II
+        | 表\s*\d+                                # 表 1
+        | 表\s*[一二三四五六七八九十]+              # 表一
+        | 清单\s*\d+                              # 清单 7
+        | 清单\s*[一二三四五六七八九十]+            # 清单七
+        | Venn\s*图                               # Venn 图 / Venn图
+    )""",
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
+# Structural H3 headings that are part of the Paper Tutor template and should NOT
+# be checked against the concept-first rule. These are section dividers, not
+# concept headings. Matching is via substring on the heading text.
+STRUCTURAL_HEADING_SUBSTRINGS = (
+    "前置知识",
+    "本章核心",
+    "核心概念",
+    "本章概览",
+    "章节概览",
+    "外部资源",
+    "术语表",
+    "概念归属",
+    "TL;DR",
+    "附录",
+)
+
+# Regex: mermaid fenced code block (captures block contents)
+MERMAID_BLOCK_RE = re.compile(
+    r"```mermaid\s*\n(.*?)\n[ \t]*```",
+    flags=re.DOTALL,
+)
+
+# Regex: single-uppercase-letter node definition inside a mermaid block.
+# Matches patterns like `A[label]`, `B(label)`, `C{label}`, `D((label))`, `E>label]`
+# where the identifier is exactly one uppercase Latin letter. These are the
+# highest-risk IDs for leaking into prose as pseudo-references, because the
+# rendered Mermaid image never shows the ID — readers only see the label.
+# Multi-char IDs like `Comp1`, `StartNode`, `B1`, `C2` are too unlikely to
+# appear as standalone prose references, so we skip them.
+MERMAID_SINGLE_LETTER_NODE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Z])\s*[\[\(\{>]"
+)
+
+# Regex: standalone single uppercase letter in prose. The lookbehind and
+# lookahead guard against matches inside words (e.g. the `A` in `AFL`) and
+# against matches where the letter is glued to a digit (e.g. `X86`, `P2P`).
+# Chinese punctuation/characters on either side are fine — they mark the
+# letter as a standalone token, exactly the kind of reference we want to catch.
+PROSE_STANDALONE_UPPERCASE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Z])(?![A-Za-z0-9_])"
+)
+
+# Mermaid reserved keywords that must never be treated as node IDs even if they
+# happen to start with an uppercase letter. Kept conservative — only single-
+# letter reserved words matter for our single-letter node ID check.
+# (None today; keep the set for forward-compat when we widen the ID check.)
+MERMAID_KEYWORDS_SINGLE_LETTER: frozenset = frozenset()
+
+# Number of lines AFTER the closing Mermaid fence to scan for prose leaks.
+# The window is cut short by the next heading or the next code fence, whichever
+# comes first — so 15 lines is an upper bound, not a requirement.
+MERMAID_LEAK_WINDOW_LINES = 15
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -48,6 +142,60 @@ def chapter_file_from_id(output_dir: Path, chapter_id: str) -> Optional[Path]:
         return None
     idx = int(match.group(1))
     return output_dir / "chapters" / f"chapter_{idx:02d}_output.md"
+
+
+def iter_markdown_images(text: str):
+    """Yield (match_object, path_string) for each markdown image reference."""
+    for match in MD_IMAGE_RE.finditer(text):
+        yield match, match.group("path").strip()
+
+
+def classify_image_path(path: str) -> str:
+    """Classify an image path: 'ok', 'parent_relative', 'absolute', 'url', 'bare', 'other'."""
+    if path.startswith("../"):
+        return "parent_relative"
+    if path.startswith("/"):
+        return "absolute"
+    if path.startswith("http://") or path.startswith("https://"):
+        return "url"
+    if path.startswith("figures/"):
+        return "ok"
+    if "/" not in path:
+        return "bare"
+    return "other"
+
+
+def teaching_paragraph_units_after(text: str, img_match: re.Match) -> int:
+    """
+    Count content units in the teaching paragraph that follows an embedded figure.
+
+    The window starts immediately after the image line and extends until the next
+    embedded image, the next H2/H3 heading, or at most ~40 lines later — whichever
+    comes first. Content is measured in chinese_chars + english_words.
+    """
+    img_end = img_match.end()
+    tail = text[img_end:]
+
+    # Skip the current line (the image line itself)
+    newline_pos = tail.find("\n")
+    if newline_pos >= 0:
+        tail = tail[newline_pos + 1:]
+
+    # Truncate at the next image or next h2/h3 heading, whichever comes first.
+    cutoff = len(tail)
+    next_image = MD_IMAGE_RE.search(tail)
+    if next_image:
+        cutoff = min(cutoff, next_image.start())
+    next_heading = re.search(r"^#{1,4}\s", tail, flags=re.MULTILINE)
+    if next_heading:
+        cutoff = min(cutoff, next_heading.start())
+
+    # Also cap at ~40 lines to avoid counting entire chapter tail as "teaching"
+    lines = tail[:cutoff].splitlines()
+    if len(lines) > 40:
+        lines = lines[:40]
+    window = "\n".join(lines)
+    return estimate_content_units(window)
 
 
 def validate_figure_analysis(metadata: Dict[str, Any]) -> Tuple[bool, List[str]]:
@@ -89,6 +237,31 @@ def validate_figure_analysis(metadata: Dict[str, Any]) -> Tuple[bool, List[str]]
             if not fig.get("analysis_method"):
                 errors.append(f"Figure '{fig_file}' is missing analysis_method")
 
+            # belongs_to_chapter is required so multimodal validator can enforce
+            # per-chapter embedding.
+            if not fig.get("belongs_to_chapter"):
+                errors.append(
+                    f"Figure '{fig_file}' is missing 'belongs_to_chapter'. "
+                    f"Figure Analyst must assign every figure to a chapter id "
+                    f"(e.g. 'ch2') so chapter agents know which figures to embed."
+                )
+
+            # level2_breakdown is required for the chapter agent's teaching paragraph.
+            l2 = fig.get("level2_breakdown") or {}
+            required_l2 = (
+                "what_to_look_at",
+                "axes_or_structure",
+                "key_observations",
+                "teaching_hook",
+            )
+            missing_l2 = [k for k in required_l2 if not l2.get(k)]
+            if missing_l2:
+                errors.append(
+                    f"Figure '{fig_file}' is missing level2_breakdown sub-fields: "
+                    f"{missing_l2}. All four ({list(required_l2)}) are required so "
+                    f"chapter agents can write a complete teaching paragraph."
+                )
+
     return len(errors) == 0, errors
 
 
@@ -120,9 +293,9 @@ def validate_chapter_reviews(shared_memory: Dict[str, Any]) -> Tuple[bool, List[
                 f"Chapter '{chapter_id}' ({chapter_title}) status is '{status}', not 'approved'"
             )
 
-        # Check review score
-        review_score = chapter.get("review_score", 0)
-        if review_score < 4.0:
+        # Check review score (None means not yet reviewed → fail)
+        review_score = chapter.get("review_score")
+        if review_score is None or review_score < 4.0:
             errors.append(
                 f"Chapter '{chapter_id}' ({chapter_title}) review_score is {review_score}, "
                 f"must be >= 4.0"
@@ -264,11 +437,13 @@ def validate_explanation_content(
     shared_memory: Dict[str, Any],
 ) -> Tuple[bool, List[str], Dict[str, Any]]:
     """
-    Validate that paper_explanation.md correctly references figures and chapter structure.
+    Validate that paper_explanation.md has correct structure.
 
     Key checks:
-    1. If figures exist in metadata, they should be referenced in explanation
-    2. Numbered chapter count in final explanation must match approved chapters
+    1. Numbered chapter count in final explanation must match approved chapters
+    2. Only H2 headings are expected (H1 means merge forgot to demote)
+
+    Figure rendering is validated separately in validate_multimodal_content.
     """
     errors: List[str] = []
 
@@ -278,35 +453,519 @@ def validate_explanation_content(
 
     explanation_content = explanation_path.read_text(encoding="utf-8")
 
-    figures = metadata.get("figures", [])
-
-    for fig in figures:
-        fig_file = fig.get("file", "")
-        if fig_file and fig_file not in explanation_content:
-            errors.append(
-                f"Figure '{fig_file}' is in metadata but not referenced in explanation"
-            )
-
-    chapter_heading_matches = re.findall(
+    # Count H2 numbered chapters (the expected form after merge-time demotion).
+    h2_chapter_count = len(re.findall(
         r"^##\s+第[一二三四五六七八九十百]+章",
         explanation_content,
         flags=re.MULTILINE,
-    )
-    final_chapter_count = len(chapter_heading_matches)
+    ))
+    # Count raw H1 numbered chapters — if > 0 the merge step forgot to demote.
+    h1_chapter_count = len(re.findall(
+        r"^#\s+第[一二三四五六七八九十百]+章",
+        explanation_content,
+        flags=re.MULTILINE,
+    ))
+
+    if h1_chapter_count > 0:
+        errors.append(
+            f"Final explanation contains {h1_chapter_count} H1 numbered chapter headings "
+            f"(`# 第X章`). Merge step must demote these to H2 (`## 第X章`) so the "
+            f"document has a single H1 title."
+        )
+
     expected_chapter_count = len(shared_memory.get("chapter_summaries", []))
 
-    if final_chapter_count != expected_chapter_count:
+    if h2_chapter_count != expected_chapter_count:
         errors.append(
             "Final explanation numbered chapter count mismatch: "
-            f"found {final_chapter_count}, expected {expected_chapter_count} "
+            f"found {h2_chapter_count} H2 numbered chapters, "
+            f"expected {expected_chapter_count} "
             "(must match approved chapters in shared_memory)"
         )
 
     stats = {
-        "final_numbered_chapters": final_chapter_count,
+        "final_numbered_chapters": h2_chapter_count,
+        "h1_numbered_chapters": h1_chapter_count,
         "expected_numbered_chapters": expected_chapter_count,
     }
 
+    return len(errors) == 0, errors, stats
+
+
+def validate_multimodal_content(
+    output_dir: Path,
+    metadata: Dict[str, Any],
+    shared_memory: Dict[str, Any],
+) -> Tuple[bool, List[str], List[str], Dict[str, Any]]:
+    """
+    Validate that figures are actually rendered via markdown image syntax and
+    surrounded by sufficient teaching text.
+
+    Hard checks (all must pass):
+    1. Every figure with `belongs_to_chapter == ch_id` must be embedded with
+       `![...](figures/<filename>)` in chapter_{XX}_output.md
+    2. Every figure in metadata must be embedded with `![...](figures/<filename>)`
+       in paper_explanation.md
+    3. No image path may use `../figures/`, absolute path, or http(s):// URL in any
+       chapter file or the final explanation
+    4. Each embedded figure must be followed by ≥150 content units of teaching text
+       before the next image, next heading, or 40 lines later
+    5. If a figure has `figure_type == "listing"`, the chapter file must contain at
+       least one fenced code block (``` ``` ``` ```)
+
+    Returns (passed, errors, warnings, stats).
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+    stats: Dict[str, Any] = {}
+
+    figures = metadata.get("figures", [])
+    image_status = metadata.get("image_analysis", {}).get("status", "unknown")
+
+    # When figure analysis was not available, skip hard multimodal checks.
+    if image_status != "available":
+        stats["skipped_reason"] = (
+            f"image_analysis.status is '{image_status}' — multimodal checks skipped"
+        )
+        return True, [], [], stats
+
+    if not figures:
+        stats["skipped_reason"] = "No figures in metadata to validate"
+        return True, [], [], stats
+
+    # Build chapter assignment map from belongs_to_chapter field.
+    # validate_figure_analysis already hard-fails on missing belongs_to_chapter, so
+    # we just skip orphans silently here and let the figure_analysis check report.
+    figures_by_chapter: Dict[str, List[Dict[str, Any]]] = {}
+    unassigned_figures: List[str] = []
+    for fig in figures:
+        file_name = fig.get("file", "")
+        if not file_name:
+            continue
+        ch_id = fig.get("belongs_to_chapter")
+        if ch_id:
+            figures_by_chapter.setdefault(ch_id, []).append(fig)
+        else:
+            unassigned_figures.append(file_name)
+
+    # === Per-chapter validation ===
+    per_chapter_stats: List[Dict[str, Any]] = []
+    for chapter in shared_memory.get("chapter_summaries", []):
+        ch_id = chapter.get("chapter_id", "")
+        ch_file = chapter_file_from_id(output_dir, ch_id)
+        if ch_file is None or not ch_file.exists():
+            continue
+
+        ch_text = ch_file.read_text(encoding="utf-8")
+        ch_label = f"Chapter '{ch_id}' ({ch_file.name})"
+
+        embedded_images = list(iter_markdown_images(ch_text))
+        embedded_figure_files: set = set()
+        for m, path in embedded_images:
+            kind = classify_image_path(path)
+            if kind == "parent_relative":
+                errors.append(
+                    f"{ch_label}: image path uses '../' prefix: {path!r}. "
+                    f"Chapter files must use 'figures/<filename>' (the merge step "
+                    f"copies chapter bodies into the root, so '../figures/' breaks)."
+                )
+            elif kind == "absolute":
+                errors.append(
+                    f"{ch_label}: image path is absolute: {path!r}. "
+                    f"Must use 'figures/<filename>'."
+                )
+            elif kind == "url":
+                errors.append(
+                    f"{ch_label}: image path is a URL: {path!r}. "
+                    f"Must use the local 'figures/<filename>'."
+                )
+            elif kind == "ok":
+                embedded_figure_files.add(path[len("figures/"):])
+            elif kind == "bare":
+                warnings.append(
+                    f"{ch_label}: image path {path!r} is a bare filename. "
+                    f"Prefer 'figures/{path}' for clarity."
+                )
+                embedded_figure_files.add(path)
+
+        # Split expected entries into image figures and listing figures.
+        # Listings are validated as fenced code blocks, not markdown images.
+        expected = figures_by_chapter.get(ch_id, [])
+        expected_image_figures = [
+            f for f in expected if f.get("figure_type") != "listing"
+        ]
+        expected_listing_figures = [
+            f for f in expected if f.get("figure_type") == "listing"
+        ]
+
+        # 1. Image figures: must be embedded via ![...](figures/<filename>)
+        missing_embeds: List[str] = []
+        for fig in expected_image_figures:
+            fig_file = fig.get("file", "")
+            if fig_file and fig_file not in embedded_figure_files:
+                missing_embeds.append(fig_file)
+                errors.append(
+                    f"{ch_label}: figure '{fig_file}' is assigned to this chapter "
+                    f"(belongs_to_chapter == {ch_id}) but is NOT embedded via "
+                    f"![...](figures/{fig_file}) markdown image syntax. Listing the "
+                    f"filename in an index table or mentioning 'Figure N' in prose "
+                    f"does NOT count as rendering."
+                )
+
+        # Check teaching paragraph length after each embedded image.
+        for m, path in embedded_images:
+            if classify_image_path(path) != "ok":
+                continue
+            units = teaching_paragraph_units_after(ch_text, m)
+            if units < MIN_FIGURE_TEACHING_UNITS:
+                errors.append(
+                    f"{ch_label}: teaching paragraph after image '{path}' is too "
+                    f"short ({units} content units, need ≥{MIN_FIGURE_TEACHING_UNITS}). "
+                    f"Each embedded figure must be followed by a ≥150 char Chinese "
+                    f"teaching paragraph covering level2_breakdown."
+                )
+
+        # 2. Listing figures: verify the chapter contains a fenced code block
+        # for each assigned listing. We count fenced code blocks (opening fences)
+        # and require count >= number of assigned listings.
+        fenced_block_count = len(re.findall(r"^```[a-zA-Z0-9_-]+", ch_text, re.MULTILINE))
+        missing_listings: List[str] = []
+        if expected_listing_figures:
+            if fenced_block_count < len(expected_listing_figures):
+                for lf in expected_listing_figures:
+                    lf_file = lf.get("file", "")
+                    missing_listings.append(lf_file)
+                errors.append(
+                    f"{ch_label}: chapter has {len(expected_listing_figures)} "
+                    f"listing figure(s) assigned but only {fenced_block_count} "
+                    f"fenced code block(s) found. Each listing must be embedded "
+                    f"as a ``` ```<lang> ``` ``` fenced code block with a language "
+                    f"tag (c/xml/bash/python/...). Expected listings: "
+                    f"{[lf.get('file') for lf in expected_listing_figures]}"
+                )
+
+        per_chapter_stats.append({
+            "chapter_id": ch_id,
+            "file": ch_file.name,
+            "expected_figures": len(expected_image_figures),
+            "embedded_assigned_figures": len(expected_image_figures) - len(missing_embeds),
+            "expected_listings": len(expected_listing_figures),
+            "fenced_code_blocks": fenced_block_count,
+            "total_image_references": len(embedded_images),
+            "missing": missing_embeds,
+            "missing_listings": missing_listings,
+        })
+
+    stats["chapters"] = per_chapter_stats
+
+    # === paper_explanation.md validation ===
+    explanation_path = output_dir / "paper_explanation.md"
+    if explanation_path.exists():
+        exp_text = explanation_path.read_text(encoding="utf-8")
+        exp_embedded = list(iter_markdown_images(exp_text))
+        exp_embedded_files: set = set()
+        for m, path in exp_embedded:
+            kind = classify_image_path(path)
+            if kind == "parent_relative":
+                errors.append(
+                    f"paper_explanation.md: image path uses '../' prefix: {path!r}. "
+                    f"Merge step must rewrite '../figures/' → 'figures/' when "
+                    f"copying chapter bodies into the root document."
+                )
+            elif kind == "absolute":
+                errors.append(
+                    f"paper_explanation.md: image path is absolute: {path!r}. "
+                    f"Must use 'figures/<filename>'."
+                )
+            elif kind == "url":
+                errors.append(
+                    f"paper_explanation.md: image path is a URL: {path!r}. "
+                    f"Must use the local 'figures/<filename>'."
+                )
+            elif kind == "ok":
+                exp_embedded_files.add(path[len("figures/"):])
+            elif kind == "bare":
+                exp_embedded_files.add(path)
+
+        # Non-listing figures must be embedded as markdown images.
+        for fig in figures:
+            if fig.get("figure_type") == "listing":
+                continue
+            fig_file = fig.get("file", "")
+            if fig_file and fig_file not in exp_embedded_files:
+                errors.append(
+                    f"paper_explanation.md: figure '{fig_file}' is in metadata but "
+                    f"NOT embedded via ![...](figures/{fig_file}) markdown image "
+                    f"syntax. Mentioning the filename in an index table is not "
+                    f"enough — the figure must be rendered at its point of "
+                    f"discussion."
+                )
+
+        # Listing figures must each correspond to a fenced code block in the
+        # merged explanation. We require the total fenced block count to be
+        # at least the number of listing entries in metadata.
+        expected_listing_count = sum(
+            1 for f in figures if f.get("figure_type") == "listing"
+        )
+        exp_fenced_count = len(re.findall(r"^```[a-zA-Z0-9_-]+", exp_text, re.MULTILINE))
+        if exp_fenced_count < expected_listing_count:
+            errors.append(
+                f"paper_explanation.md: expected at least "
+                f"{expected_listing_count} fenced code blocks (one per listing) "
+                f"but found only {exp_fenced_count}. Every listing figure in "
+                f"metadata must be embedded as a ``` ```<lang> ``` ``` block."
+            )
+
+        stats["explanation_rendered_figures"] = len(exp_embedded_files)
+        stats["explanation_total_image_refs"] = len(exp_embedded)
+        stats["explanation_fenced_code_blocks"] = exp_fenced_count
+        stats["explanation_expected_listings"] = expected_listing_count
+
+    stats["total_figures"] = len(figures)
+    stats["assigned_figures"] = sum(len(v) for v in figures_by_chapter.values())
+    stats["unassigned_figures"] = len(unassigned_figures)
+
+    return len(errors) == 0, errors, warnings, stats
+
+
+def validate_concept_first_headings(
+    output_dir: Path,
+    shared_memory: Dict[str, Any],
+) -> Tuple[bool, List[str], Dict[str, Any]]:
+    """
+    Validate that no chapter uses figure/table/listing names as ###/#### headings.
+
+    This is the concept-first rule: each `####` sub-section must be a proposition
+    ("how does X work?", "why does Y fail?"), NOT a figure walkthrough
+    ("Figure 3", "Listing 7", "Venn 图"). Figures/tables/listings are supporting
+    evidence woven into proposition narratives, not top-level subjects.
+
+    Structural headings (前置知识, 本章核心, 外部资源, ...) are allowed — they are
+    part of the Paper Tutor template and do not carry proposition semantics.
+    """
+    errors: List[str] = []
+    offenders_by_chapter: Dict[str, List[Dict[str, str]]] = {}
+    total_headings_scanned = 0
+    total_offenders = 0
+
+    for chapter in shared_memory.get("chapter_summaries", []):
+        ch_id = chapter.get("chapter_id", "")
+        ch_file = chapter_file_from_id(output_dir, ch_id)
+        if ch_file is None or not ch_file.exists():
+            continue
+        ch_text = ch_file.read_text(encoding="utf-8")
+        offenders: List[Dict[str, str]] = []
+
+        for m in HEADING_LEVEL_3_OR_4_RE.finditer(ch_text):
+            total_headings_scanned += 1
+            heading_text = m.group(2).strip()
+            # Skip structural headings — they are part of the template.
+            if any(s in heading_text for s in STRUCTURAL_HEADING_SUBSTRINGS):
+                continue
+            match = FORBIDDEN_HEADING_TOKENS_RE.search(heading_text)
+            if match:
+                line_no = ch_text[: m.start()].count("\n") + 1
+                offenders.append(
+                    {
+                        "line": str(line_no),
+                        "heading": heading_text,
+                        "forbidden_token": match.group(1).strip(),
+                    }
+                )
+                total_offenders += 1
+
+        if offenders:
+            offenders_by_chapter[ch_id] = offenders
+            for o in offenders:
+                errors.append(
+                    f"Chapter '{ch_id}' ({ch_file.name}) line {o['line']}: "
+                    f"heading '{o['heading']}' violates concept-first rule "
+                    f"(contains forbidden token '{o['forbidden_token']}'). "
+                    f"Rewrite as a proposition — figures/tables/listings are evidence, "
+                    f"not subjects. See references/multimodal-content.md Example 0."
+                )
+
+    stats = {
+        "headings_scanned": total_headings_scanned,
+        "offenders_total": total_offenders,
+        "offenders_by_chapter": {k: len(v) for k, v in offenders_by_chapter.items()},
+    }
+    return len(errors) == 0, errors, stats
+
+
+def _find_mermaid_id_leaks_in_text(text: str) -> Dict[str, Any]:
+    """
+    Find Mermaid single-letter node ID leaks in a single text body.
+
+    For each Mermaid code block in the text:
+      1. Extract the set of single-uppercase-letter node IDs (e.g. {'A','B','C','D'}).
+      2. Scan the next MERMAID_LEAK_WINDOW_LINES lines of prose (cut short by
+         the next heading or the next code fence) for standalone occurrences of
+         any of those letters.
+      3. Each standalone occurrence is recorded as a leak.
+
+    Returns:
+        {
+            "blocks_scanned": int,
+            "leaks": [
+                {"line": int, "id": str, "distance": int, "context": str}
+            ],
+        }
+    """
+    leaks: List[Dict[str, Any]] = []
+    lines = text.splitlines()
+
+    blocks = []
+    for m in MERMAID_BLOCK_RE.finditer(text):
+        source = m.group(1)
+        # Line numbers are 1-indexed; end_line is the line of the closing fence.
+        start_line = text[: m.start()].count("\n") + 1
+        end_line = text[: m.end()].count("\n") + 1
+
+        ids: set = set()
+        for id_match in MERMAID_SINGLE_LETTER_NODE_RE.finditer(source):
+            letter = id_match.group(1)
+            if letter in MERMAID_KEYWORDS_SINGLE_LETTER:
+                continue
+            ids.add(letter)
+
+        blocks.append(
+            {
+                "start_line": start_line,
+                "end_line": end_line,
+                "ids": ids,
+            }
+        )
+
+    for block in blocks:
+        if not block["ids"]:
+            continue
+        # Window is the lines AFTER the closing fence. end_line is 1-indexed;
+        # convert to 0-indexed start for slicing `lines`.
+        window_start_idx = block["end_line"]  # line (end_line+1) in 1-indexed
+        window_limit_idx = min(window_start_idx + MERMAID_LEAK_WINDOW_LINES, len(lines))
+
+        for line_idx in range(window_start_idx, window_limit_idx):
+            if line_idx >= len(lines):
+                break
+            line = lines[line_idx]
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Stop the window at the next code fence (prose ends there).
+            if stripped.startswith("```"):
+                break
+            # Stop the window at the next markdown heading.
+            if re.match(r"^#{1,6}\s", stripped):
+                break
+            # Collect all standalone-uppercase matches whose letter is in the
+            # block's ID set. We group by letter so we can count DISTINCT IDs.
+            matches_by_letter: Dict[str, List[Any]] = {}
+            for match in PROSE_STANDALONE_UPPERCASE_RE.finditer(line):
+                letter = match.group(1)
+                if letter in block["ids"]:
+                    matches_by_letter.setdefault(letter, []).append(match)
+
+            # Precision guard: only flag a line when it contains >=2 DISTINCT
+            # node IDs from the block's ID set. This is the observed failure
+            # signature ("C 与 D 的交界处", "A -> B -> C"), and skipping the
+            # single-letter case eliminates the common false positive where a
+            # bare "C" on a nearby line refers to the C programming language
+            # (e.g. "C 程序", "C 代码") and just happens to collide with a
+            # Mermaid node ID. Leaks that genuinely involve only one letter on
+            # a line (e.g. "节点 C 是入口") are accepted as missed — the
+            # editorial review is expected to catch those.
+            if len(matches_by_letter) < 2:
+                continue
+
+            for letter, match_list in matches_by_letter.items():
+                for match in match_list:
+                    context_start = max(0, match.start() - 20)
+                    context_end = min(len(line), match.end() + 20)
+                    snippet = line[context_start:context_end].strip()
+                    leaks.append(
+                        {
+                            "line": line_idx + 1,
+                            "id": letter,
+                            "distance": (line_idx + 1) - block["end_line"],
+                            "context": snippet,
+                            "coincident_ids": sorted(matches_by_letter.keys()),
+                        }
+                    )
+
+    return {
+        "blocks_scanned": len(blocks),
+        "leaks": leaks,
+    }
+
+
+def validate_mermaid_node_id_leaks(
+    output_dir: Path,
+    shared_memory: Dict[str, Any],
+) -> Tuple[bool, List[str], Dict[str, Any]]:
+    """
+    Validate that no chapter's prose references a Mermaid source-level node ID.
+
+    Mermaid code like `A[Static Analysis]` defines a node with ID `A` and label
+    "Static Analysis". After rendering, the reader sees only the label text —
+    the ID `A` is an internal identifier, invisible in the rendered figure. If
+    the chapter's prose then says "A 与 B 的交界处" or "节点 C", the reader has
+    no way to find out what A/B/C refer to. This is a silent but severe
+    pedagogical bug: the chapter looks coherent to whoever reads the .md source
+    but produces orphan single-letter references in the rendered output.
+
+    This check extracts single-uppercase-letter node IDs from every Mermaid
+    block in every chapter file, then scans the next 15 lines of prose after
+    the block for standalone occurrences of any of those letters. Each match
+    is a hard-fail.
+
+    Scope: all `chapters/chapter_XX_output.md` files plus the merged
+    `paper_explanation.md`. Longer (>=2 char) node IDs like `Comp1`, `B1`,
+    `Start` are intentionally NOT checked — they're far less likely to be
+    confused for bare prose references and checking them would inflate the
+    false-positive rate.
+    """
+    errors: List[str] = []
+    leaks_by_file: Dict[str, List[Dict[str, Any]]] = {}
+    total_blocks = 0
+    total_leaks = 0
+
+    files_to_check: List[Tuple[str, Path]] = []
+    for chapter in shared_memory.get("chapter_summaries", []):
+        ch_id = chapter.get("chapter_id", "")
+        ch_file = chapter_file_from_id(output_dir, ch_id)
+        if ch_file is not None and ch_file.exists():
+            files_to_check.append((ch_id, ch_file))
+
+    explanation_file = output_dir / "paper_explanation.md"
+    if explanation_file.exists():
+        files_to_check.append(("paper_explanation.md", explanation_file))
+
+    for file_label, file_path in files_to_check:
+        text = file_path.read_text(encoding="utf-8")
+        result = _find_mermaid_id_leaks_in_text(text)
+        total_blocks += result["blocks_scanned"]
+        if result["leaks"]:
+            leaks_by_file[file_label] = result["leaks"]
+            for leak in result["leaks"]:
+                total_leaks += 1
+                errors.append(
+                    f"File '{file_label}' ({file_path.name}) line {leak['line']}: "
+                    f"prose references Mermaid node ID '{leak['id']}' "
+                    f"(defined {leak['distance']} line(s) above in a Mermaid "
+                    f"block). Node IDs are internal source-code identifiers — "
+                    f"the rendered image shows only node labels, not IDs, so "
+                    f"the reader has no way to see what '{leak['id']}' refers "
+                    f"to. Rewrite the prose to use the node's label text "
+                    f"(e.g. 'Fuzzing 与 Concolic Execution 的交界处' instead "
+                    f"of 'C 与 D 的交界处'). Context: {leak['context']!r}"
+                )
+
+    stats = {
+        "mermaid_blocks_scanned": total_blocks,
+        "leaks_total": total_leaks,
+        "leaks_by_file": {k: len(v) for k, v in leaks_by_file.items()},
+    }
     return len(errors) == 0, errors, stats
 
 
@@ -420,6 +1079,48 @@ def validate_execution(output_dir: str) -> Tuple[bool, Dict[str, Any]]:
         if not content_valid:
             results["valid"] = False
 
+    # 7. Validate multimodal content (figure rendering, teaching paragraphs, listings)
+    if metadata and shared_memory:
+        mm_valid, mm_errors, mm_warnings, mm_stats = validate_multimodal_content(
+            output_path, metadata, shared_memory
+        )
+        results["checks"]["multimodal_content"] = {
+            "passed": mm_valid,
+            "errors": mm_errors,
+            "warnings": mm_warnings,
+            **mm_stats,
+        }
+        if not mm_valid:
+            results["valid"] = False
+
+    # 8. Validate concept-first headings (forbids Figure N / Listing N / 图 N sub-sections)
+    if shared_memory:
+        cf_valid, cf_errors, cf_stats = validate_concept_first_headings(
+            output_path, shared_memory
+        )
+        results["checks"]["concept_first_headings"] = {
+            "passed": cf_valid,
+            "errors": cf_errors,
+            **cf_stats,
+        }
+        if not cf_valid:
+            results["valid"] = False
+
+    # 9. Validate mermaid node ID leaks (forbids prose references to source-level
+    # single-letter node IDs like "A 与 B 的交界处" — the rendered figure shows
+    # only node labels, so the ID is invisible to the reader).
+    if shared_memory:
+        mm_id_valid, mm_id_errors, mm_id_stats = validate_mermaid_node_id_leaks(
+            output_path, shared_memory
+        )
+        results["checks"]["mermaid_node_id_leaks"] = {
+            "passed": mm_id_valid,
+            "errors": mm_id_errors,
+            **mm_id_stats,
+        }
+        if not mm_id_valid:
+            results["valid"] = False
+
     return results["valid"], results
 
 
@@ -467,8 +1168,62 @@ def main() -> None:
         if check_name == "explanation_content":
             found = check_result.get("final_numbered_chapters")
             expected = check_result.get("expected_numbered_chapters")
+            h1 = check_result.get("h1_numbered_chapters", 0)
             if found is not None and expected is not None:
                 print(f"   - Numbered chapters in final doc: {found} (expected {expected})")
+            if h1:
+                print(f"   - Raw H1 numbered chapters (should be 0): {h1}")
+
+        if check_name == "concept_first_headings":
+            scanned = check_result.get("headings_scanned", 0)
+            offenders = check_result.get("offenders_total", 0)
+            print(f"   - Headings scanned: {scanned}")
+            print(f"   - Concept-first violations: {offenders}")
+            by_chapter = check_result.get("offenders_by_chapter", {})
+            if by_chapter:
+                for ch_id, count in by_chapter.items():
+                    print(f"     * {ch_id}: {count} figure-named heading(s)")
+
+        if check_name == "mermaid_node_id_leaks":
+            blocks = check_result.get("mermaid_blocks_scanned", 0)
+            leaks = check_result.get("leaks_total", 0)
+            print(f"   - Mermaid blocks scanned: {blocks}")
+            print(f"   - Single-letter ID leaks in prose: {leaks}")
+            by_file = check_result.get("leaks_by_file", {})
+            if by_file:
+                for file_label, count in by_file.items():
+                    print(f"     * {file_label}: {count} leak(s)")
+
+        if check_name == "multimodal_content":
+            if check_result.get("skipped_reason"):
+                print(f"   - {check_result['skipped_reason']}")
+            else:
+                total = check_result.get("total_figures", 0)
+                assigned = check_result.get("assigned_figures", 0)
+                unassigned = check_result.get("unassigned_figures", 0)
+                print(
+                    f"   - Figures: {total} total, {assigned} assigned to chapters, "
+                    f"{unassigned} unassigned"
+                )
+                exp_rendered = check_result.get("explanation_rendered_figures")
+                if exp_rendered is not None:
+                    print(
+                        f"   - paper_explanation.md rendered figures: {exp_rendered} "
+                        f"/ {total}"
+                    )
+                for ch in check_result.get("chapters", []):
+                    expected_n = ch.get("expected_figures", 0)
+                    embedded_n = ch.get("embedded_assigned_figures", 0)
+                    total_refs = ch.get("total_image_references", 0)
+                    mark = "✓" if expected_n == embedded_n else "✗"
+                    print(
+                        f"     {mark} {ch['chapter_id']} ({ch['file']}): "
+                        f"{embedded_n}/{expected_n} assigned figures embedded "
+                        f"({total_refs} total image refs)"
+                    )
+
+        for warning in check_result.get("warnings", []) or []:
+            print(f"   ⚠️  {warning}")
 
         for error in check_result.get("errors", []):
             print(f"   ❌ {error}")
