@@ -30,6 +30,27 @@ export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 codex --version  # must be available
 ```
 
+## Model and Reasoning Configuration
+
+Use `-m` to select a model and `-c` to tune reasoning effort:
+
+```bash
+# Set model (default: whatever is in ~/.codex/config.toml)
+codex exec -m gpt-5.4-pro ...
+
+# Set reasoning effort: low | medium | high | xhigh (default)
+codex exec -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' ...
+```
+
+| Scenario | Recommended flags |
+|----------|-------------------|
+| Deep design review | `-m gpt-5.4-pro` (default xhigh reasoning) |
+| Quick code review | `-m gpt-5.4-pro -c 'model_reasoning_effort="medium"'` |
+| Fast validation | `-m gpt-5.4 -c 'model_reasoning_effort="medium"'` |
+| Budget-conscious | `-m gpt-5.4-mini` |
+
+When Codex times out (>300s), retry with lower reasoning effort before giving up.
+
 ## Modes
 
 | Mode | Sandbox | Task framing (prepended to prompt) |
@@ -105,6 +126,16 @@ Rules:
 
 ```bash
 timeout 300 codex exec \
+  -m gpt-5.4-pro \
+  --sandbox read-only --skip-git-repo-check \
+  -o "$DISCUSS_DIR/response-1.md" \
+  "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
+```
+
+If this times out, retry with reduced reasoning effort:
+```bash
+timeout 300 codex exec \
+  -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' \
   --sandbox read-only --skip-git-repo-check \
   -o "$DISCUSS_DIR/response-1.md" \
   "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."

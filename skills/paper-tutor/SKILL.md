@@ -130,16 +130,23 @@ Step 7: Validation (Run validate_execution.py)
 python ~/.claude/skills/paper-tutor/scripts/check_dependencies.py
 ```
 
-If dependencies are missing:
+The checker verifies three things and exits non-zero on any failure:
+
+1. **Python interpreter version** — PyMuPDF wheels lag CPython releases by weeks; an unsupported interpreter (e.g. CPython 3.14 shortly after release) cannot build the wheel. The checker refuses to proceed and tells the user to install a supported interpreter (e.g. `brew install python@3.12` on macOS, then create a venv from it).
+2. **Required packages** — `pymupdf`, `Pillow`, `imagehash` must all import.
+3. **PyMuPDF minimum version** — extract_figures.py needs `pymupdf >= 1.23`; older builds lack APIs used by the caption-anchored crop logic.
+
+If any check fails:
 
 1. Ask user permission before any installation.
-2. If user approves, run:
+2. If the checker reports a Python-version problem, packages cannot be installed into that interpreter — the user MUST switch interpreters first. Do not attempt `pip install` as a workaround.
+3. For missing/outdated packages only, after user approval run:
 
 ```bash
 python -m pip install -r ~/.claude/skills/paper-tutor/scripts/requirements.txt
 ```
 
-3. Re-run `check_dependencies.py` and continue only when all checks pass.
+4. Re-run `check_dependencies.py` and continue only when all checks pass.
 
 If user declines installation, continue with a degraded path:
 - Skip figure extraction (`Step 2.1`)
@@ -338,6 +345,24 @@ Launch via Task tool:
    - 不确定时跳过该图片
    - 绝不编造图片内容
    - 发现图片渲染不完整（被截断、空白、重复）时，在 `status` 字段写 `"render_issue"` 并跳过
+
+7. **渲染一致性校验**（extract_figures.py v5 之后必须执行）：
+
+   `extraction_index.json` 的每条 figures[] 都带有 `diagnostics` 子对象：
+   - `crop_class`: `full_width` / `centered_wide` / `half_width_left` / `half_width_right` / `narrow`
+   - `crop_width_ratio`: crop 宽度占页面宽度的比例
+   - `caption_offset_from_mid_pt`: caption 中心相对页面中线的偏移（pt）
+
+   读取图片后对照这些字段 + caption 文本 + 论文类型做一致性检查。**若任一不一致，设置 `status: "render_issue"` 并在 `level1_summary` 中说明怀疑原因，不生成 `level2_breakdown`**（否则会误导 Chapter Agent 写错的讲解）：
+
+   - Caption 声明多阶段架构（"4 phases", "three-stage pipeline", "A → B → C → D"）但图片里只看到 1–2 个框 / 箭头 → 很可能裁剪了一半。
+   - Caption 声明 N 列的表格但图片只显示 < N/2 列 → 可能裁错列位置。
+   - Caption 提到若干具体标签/名字（如 "heap-buffer-overflow, memory-leak"）但图片里没有那些文字 → 内容不对应。
+   - `crop_class: "narrow"` 且 `crop_width_ratio < 0.15`：架构图 / 表格极少这么窄，大概率是截断。
+   - `crop_class: "half_width_*"` 但 `caption_offset_from_mid_pt` 接近 0（|offset| < 5pt）：Caption 居中意味着该图应当是 full_width 或 centered_wide——half-width 极可能把图截掉一半。这是 v5 之前最常见的 bug 模式。
+   - Table 的 `crop_width_ratio < 0.25`：表格通常 >30% 宽，过窄往往意味着 crop 落到了页脚 / 章节标题附近。
+
+   验证脚本 `validate_execution.py` 的 `figure_rendering` 检查会重复这些规则并在失败时阻塞整条流水线；Figure Analyst 的早期标记可以让 Editor 的人读稿件时就看到问题，而不是等到最终校验才发现。
 ```
 
 ### Figure Analysis Signature Enforcement
@@ -593,6 +618,8 @@ total_score = (accuracy + clarity + completeness + consistency + word_count) / 5
   10. **公式非 LaTeX**：章节内出现看起来像公式的内容（含 `=`、`sum`、`int`、`sqrt`、希腊字母等），但未用 LaTeX 定界符（`\$...\$` 或 `\$\$...\$\$`）渲染
   11. **Listing 未渲染**：figures[] 有 `figure_type == "listing"` 条目，但对应代码未在章节中以 fenced code block 出现
   12. 出现新增编号章节（如"第七章"）但未在 `shared_memory.chapter_summaries` 中注册并通过审核
+  13. **Figure Analyst 的 render_issue 未被处理**：`paper_metadata.json.figures[]` 中存在 `status == "render_issue"` 的条目（也可能没有 `level2_breakdown`），但章节仍然把该图以 `![...](figures/...)` 嵌入并当正常图讲解。正确做法：在叙事中明写"论文原图（Figure N）因提取问题未展示，此处用文字描述其要点"或同等表述；严禁默认图片渲染无问题。
+  14. **Crop 几何与 caption 不一致**：抽查一张 `belongs_to_chapter == 本章 id` 的图，若 `extraction_index.json.figures[].diagnostics` 显示 `crop_class: "half_width_*"` 且 `caption_offset_from_mid_pt` 接近 0，而章节正文却以"完整架构图/端到端流水线/全页表"的口吻描述该图 → 驳回。Editor 应运行 `validate_execution.py` 的 `figure_rendering` 检查并阅读返回的 errors 列表；凡是出现 `crop_class` 与 `crop_width_ratio` 不匹配或"caption 居中但 crop 半宽"的条目，对应章节一律需要修订。
 
 ## 如果需要修改
 

@@ -265,6 +265,151 @@ def validate_figure_analysis(metadata: Dict[str, Any]) -> Tuple[bool, List[str]]
     return len(errors) == 0, errors
 
 
+# Visual-sanity thresholds. These surface obvious rendering failures (an empty
+# crop, a near-blank crop, a crop whose diagnostics contradict its labelled
+# class) BEFORE chapter agents embed them. They don't catch semantic errors —
+# a pie chart with the wrong labels still renders normally.
+_MIN_FIG_PIXELS_WIDTH = 80
+_MIN_FIG_PIXELS_HEIGHT = 60
+# ≥98% white is essentially blank paper: the crop landed on whitespace.
+_MAX_WHITE_PIXEL_RATIO = 0.98
+# crop_class → expected crop_width_ratio window (from extract_figures.py v5
+# diagnostics). A "full_width" crop whose ratio is 0.12 is a bug.
+_CROP_CLASS_RATIO_WINDOW: Dict[str, Tuple[float, float]] = {
+    "full_width": (0.55, 1.01),
+    "centered_wide": (0.35, 0.70),
+    "half_width_left": (0.28, 0.62),
+    "half_width_right": (0.28, 0.62),
+    "narrow": (0.0, 0.35),
+}
+
+
+def _image_white_ratio(path: Path) -> Optional[float]:
+    """Return the fraction of near-white pixels in an image (0..1), or None
+    if the file can't be opened with PIL."""
+    try:
+        from PIL import Image  # type: ignore
+    except ImportError:
+        return None
+    try:
+        with Image.open(path) as img:
+            gray = img.convert("L")
+            # Downsample for speed — a blank crop is blank at any resolution.
+            gray.thumbnail((256, 256))
+            raw = gray.tobytes()
+    except Exception:
+        return None
+    if not raw:
+        return 0.0
+    white_count = sum(1 for b in raw if b >= 240)
+    return white_count / len(raw)
+
+
+def validate_figure_rendering(output_dir: Path) -> Tuple[bool, List[str], Dict[str, Any]]:
+    """
+    Visual sanity check on extracted figure/table PNGs referenced by
+    extraction_index.json. Catches:
+      (a) file missing on disk despite being indexed
+      (b) width × height below a usable minimum
+      (c) image is essentially a blank page (>98% white pixels)
+      (d) crop_class in diagnostics disagrees with measured crop_width_ratio
+
+    These are the failure modes the v5 extractor rewrite was designed to
+    eliminate, so validating them here catches regressions early.
+
+    Returns (passed, errors, stats). Passed when errors list is empty.
+    """
+    errors: List[str] = []
+    stats: Dict[str, Any] = {
+        "index_present": False,
+        "figures_total": 0,
+        "figures_checked": 0,
+        "figures_blank": 0,
+        "figures_mismatched_class": 0,
+        "figures_missing_file": 0,
+        "figures_too_small": 0,
+    }
+
+    index_path = output_dir / "extraction_index.json"
+    if not index_path.exists():
+        # Skip: extraction_index.json is optional for the overall validator.
+        return True, errors, stats
+    stats["index_present"] = True
+
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"extraction_index.json is not valid JSON: {exc}")
+        return False, errors, stats
+
+    figures = index.get("figures") or []
+    stats["figures_total"] = len(figures)
+
+    for fig in figures:
+        rel = fig.get("file")
+        label = fig.get("paper_label") or rel or "unknown"
+        if not rel:
+            continue
+        fpath = output_dir / rel
+        if not fpath.exists():
+            errors.append(f"{label}: listed in extraction_index.json but file not found at {rel}")
+            stats["figures_missing_file"] += 1
+            continue
+
+        stats["figures_checked"] += 1
+
+        width_px = fig.get("width_px")
+        height_px = fig.get("height_px")
+        if isinstance(width_px, int) and isinstance(height_px, int):
+            if width_px < _MIN_FIG_PIXELS_WIDTH or height_px < _MIN_FIG_PIXELS_HEIGHT:
+                errors.append(
+                    f"{label}: rendered at {width_px}x{height_px}px, below "
+                    f"minimum {_MIN_FIG_PIXELS_WIDTH}x{_MIN_FIG_PIXELS_HEIGHT}. "
+                    f"Crop likely missed the figure content."
+                )
+                stats["figures_too_small"] += 1
+
+        white_ratio = _image_white_ratio(fpath)
+        if white_ratio is not None and white_ratio >= _MAX_WHITE_PIXEL_RATIO:
+            errors.append(
+                f"{label}: image is {white_ratio:.1%} blank/white pixels. "
+                f"Crop landed on whitespace — caption anchoring likely picked "
+                f"the wrong anchor."
+            )
+            stats["figures_blank"] += 1
+
+        diagnostics = fig.get("diagnostics") or {}
+        crop_class = diagnostics.get("crop_class")
+        crop_ratio = diagnostics.get("crop_width_ratio")
+        if crop_class in _CROP_CLASS_RATIO_WINDOW and isinstance(crop_ratio, (int, float)):
+            lo, hi = _CROP_CLASS_RATIO_WINDOW[crop_class]
+            if not (lo <= crop_ratio <= hi):
+                errors.append(
+                    f"{label}: crop_class='{crop_class}' but crop_width_ratio="
+                    f"{crop_ratio:.2f} falls outside expected window [{lo}, {hi}]. "
+                    f"Either class label or crop geometry is wrong."
+                )
+                stats["figures_mismatched_class"] += 1
+
+        # A caption centered on the page midline (±5pt) almost always sits
+        # over a full-width figure. A half-width crop with a centered caption
+        # was the exact failure mode behind the Figure 2 bug — guard against
+        # its return.
+        offset = diagnostics.get("caption_offset_from_mid_pt")
+        if (isinstance(offset, (int, float))
+                and abs(offset) < 5.0
+                and crop_class in ("half_width_left", "half_width_right")):
+            errors.append(
+                f"{label}: caption is centered on the page (offset={offset:+.1f}pt) "
+                f"but crop_class='{crop_class}'. A centered caption typically "
+                f"implies a full-width figure — verify the crop didn't clip "
+                f"half the figure."
+            )
+            stats["figures_mismatched_class"] += 1
+
+    return len(errors) == 0, errors, stats
+
+
 def validate_chapter_reviews(shared_memory: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     Validate that all chapters were reviewed and approved by Editor-in-Chief.
@@ -1033,6 +1178,18 @@ def validate_execution(output_dir: str) -> Tuple[bool, Dict[str, Any]]:
         }
         if not fig_valid:
             results["valid"] = False
+
+    # 2b. Visual sanity of extracted figure files. Independent of Figure
+    # Analyst — catches mechanical rendering failures (blank crop, wrong
+    # class) without needing a multimodal model.
+    render_valid, render_errors, render_stats = validate_figure_rendering(output_path)
+    results["checks"]["figure_rendering"] = {
+        "passed": render_valid,
+        "errors": render_errors,
+        **render_stats,
+    }
+    if not render_valid:
+        results["valid"] = False
 
     # 3. Validate chapter reviews
     if shared_memory:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PDF Figure Extraction via caption-anchored cropping (v4).
+PDF Figure Extraction via caption-anchored cropping (v5).
 
 Academic papers reliably place figures near a caption that matches
 "Figure N" / "Fig. N" / "Table N" / "Listing N". This script:
@@ -10,16 +10,33 @@ Academic papers reliably place figures near a caption that matches
      "Figure 4. The former leads directly to the bug in the binary." which is
      a sentence mentioning Figure 4, not a caption.
   2. For each figure caption, clusters drawings / images / narrow text labels
-     in the caption's COLUMN (narrow sub-column, half column, or full page
-     width depending on caption width) starting from the rect nearest the
-     caption and greedy-extending while the vertical gap stays below 45pt.
+     around the caption. Instead of pre-deciding a "column" from caption
+     width — which misclassifies wide figures whose caption happens to be a
+     short line — the crop is computed by:
+       (a) bounding the vertical search region by OTHER captions on the
+           same page (a neighboring figure's caption cleanly separates
+           this figure's content from that figure's content, without any
+           manual column guessing);
+       (b) anchoring on the rect closest to the caption and horizontally
+           aligned with the caption's center (with generous slop so narrow
+           captions still find their own full-width figure above);
+       (c) iteratively growing the cluster through both y-proximity AND
+           x-overlap — so a single-column figure never accretes the
+           neighboring column's body text, but a full-page-width figure's
+           cluster naturally reaches both edges.
+     The resulting cluster bbox is the crop region — no post-hoc column
+     clipping, no caption-width heuristic.
   3. For tables whose block contains the entire table + caption text (the
      common IEEE layout where PyMuPDF merges data rows and caption into one
      block), uses the block bbox directly.
   4. Renders the cropped region at the requested DPI to PNG.
-  5. For listings, extracts the code as plain text to listings/ (code is
+  5. Each extraction records a `diagnostics` block with the chosen crop's
+     caption-relative metrics (caption x-center vs. page midline, crop x
+     extent, aspect ratio) so downstream validation can flag suspicious
+     crops without re-reading the PDF.
+  6. For listings, extracts the code as plain text to listings/ (code is
      embedded via markdown code fence, not as an image).
-  6. Writes an extraction_index.json with caption metadata so that the
+  7. Writes an extraction_index.json with caption metadata so that the
      Figure Analyst and chapter agents have an authoritative mapping from
      paper labels ("Figure 3") to local files.
 
@@ -151,20 +168,30 @@ def find_captions(doc: pymupdf.Document) -> List[Caption]:
                 ))
                 continue
 
-            # Table special case: data rows then caption inside one block
-            for line in lines[1:]:
+            # Table special case: data rows then caption inside one block.
+            # GUARD: the line immediately preceding the match must end with
+            # sentence-terminal punctuation (., !, ?). Body-text paragraphs
+            # that happen to wrap on "Table N." do NOT satisfy this — their
+            # previous line ends mid-phrase ("... as shown in"). Real
+            # in-block captions are preceded by a table's last data row (a
+            # period-ending footnote is fine) or by an empty/blank context.
+            for i, line in enumerate(lines[1:], start=1):
                 ltext = _line_text(line).strip()
                 m = TABLE_CAPTION_RE.match(ltext)
-                if m:
-                    captions.append(Caption(
-                        kind="table",
-                        label=f"Table {m.group(1)}",
-                        number=m.group(1),
-                        text=ltext[:240],
-                        page=page_idx,
-                        bbox=bbox,
-                    ))
-                    break
+                if not m:
+                    continue
+                prev_text = _line_text(lines[i - 1]).rstrip()
+                if not prev_text.endswith((".", "!", "?")):
+                    continue
+                captions.append(Caption(
+                    kind="table",
+                    label=f"Table {m.group(1)}",
+                    number=m.group(1),
+                    text=ltext[:240],
+                    page=page_idx,
+                    bbox=bbox,
+                ))
+                break
 
     # Dedup: keep the first occurrence per (kind, number). Sorted block-first
     # detection already avoids body-text duplicates, so first-wins is safe.
@@ -180,41 +207,238 @@ def find_captions(doc: pymupdf.Document) -> List[Caption]:
 # Region cropping
 # ---------------------------------------------------------------------------
 
-def _compute_column(
+# Body-text discriminator: a text block is considered a figure label / legend
+# only if its width is below this fraction of the full page width AND its
+# height fits within a few lines. A 2-column IEEE page has body-text columns
+# at ~37% of page width; a tight filter (0.35) rejects them while still
+# accepting long code listings and multi-line figure captions inside figures.
+_LABEL_MAX_PAGE_FRACTION = 0.35
+# Tables have data rows that commonly span ~70% of page width (a full table
+# spans both columns minus margins). Use a much looser width cap for tables,
+# but STILL apply the tall-and-wide body-text guard below.
+_TABLE_LABEL_MAX_PAGE_FRACTION = 0.75
+# Even if a block passes the width threshold (e.g. a half-column code block),
+# body paragraphs are tall: more than ~4 lines at 10pt leading ≈ 50pt. Reject
+# anything both wide-ish (>25% page width) and tall — that's body text.
+_LABEL_BODY_WIDTH_FRACTION = 0.25
+_LABEL_BODY_HEIGHT_PT = 50.0
+
+# Horizontal slop for "cluster-overlap" checks. Small enough to NOT bridge the
+# typical 2-column gutter (15-20pt) but generous enough to admit arrow
+# connectors between adjacent figure parts (usually ≤ 10pt of visual gap).
+_X_OVERLAP_SLOP_PT = 10.0
+_CAPTION_ALIGN_FRACTION = 0.15
+_CAPTION_ALIGN_MIN_PT = 50.0
+
+# Margin added above/below the separator caption so neighbor figures don't
+# accidentally bleed into each other by exactly 1pt.
+_CAPTION_SEPARATOR_MARGIN_PT = 5.0
+
+
+def _vertical_search_bounds(
     page_rect: pymupdf.Rect,
-    cap_bbox: Tuple[float, float, float, float],
+    caption: "Caption",
+    other_captions: List["Caption"],
+    *,
+    max_height_pt: float,
+    prefer_above: bool,
 ) -> Tuple[float, float]:
     """
-    Determine the horizontal column that contains a figure caption.
-
-    - Wide captions (> 60% of page width)  → full page width (2-column fig)
-    - Half-width captions (> 30%)          → left or right IEEE column
-    - Narrow captions (≤ 30%)              → caption-centered sub-column
+    Compute the [y_far, y_near] search region for content that belongs to
+    `caption`. The bound nearest the caption is fixed at the caption edge;
+    the far bound is tightened by any OTHER caption on the same page that
+    sits between `caption` and the max_height_pt limit. This is what cleanly
+    separates neighboring figures on the same page, without any column
+    guessing.
     """
-    cx0, _, cx1, _ = cap_bbox
-    cap_cx = (cx0 + cx1) / 2.0
-    pw = page_rect.x1 - page_rect.x0
-    mid = (page_rect.x0 + page_rect.x1) / 2.0
-    cw = cx1 - cx0
+    cx0, cy0, cx1, cy1 = caption.bbox
 
-    if cw > pw * 0.6:
-        return (page_rect.x0 + 2, page_rect.x1 - 2)
-    if cw > pw * 0.3:
-        if cap_cx < mid:
-            return (page_rect.x0 + 2, mid - 2)
-        return (mid + 2, page_rect.x1 - 2)
-    return (
-        max(page_rect.x0 + 2, cx0 - 15),
-        min(page_rect.x1 - 2, cx1 + 15),
-    )
+    if prefer_above:
+        y_near = cy0
+        y_far = max(page_rect.y0 + 2, cy0 - max_height_pt)
+        for oc in other_captions:
+            _, _, _, ocy1 = oc.bbox
+            if ocy1 < cy0:
+                y_far = max(y_far, ocy1 + _CAPTION_SEPARATOR_MARGIN_PT)
+    else:
+        y_near = cy1
+        y_far = min(page_rect.y1 - 2, cy1 + max_height_pt)
+        for oc in other_captions:
+            ocx0, ocy0, _, _ = oc.bbox
+            if ocy0 > cy1:
+                y_far = min(y_far, ocy0 - _CAPTION_SEPARATOR_MARGIN_PT)
+
+    return y_far, y_near
+
+
+def _collect_content_candidates(
+    page: pymupdf.Page,
+    caption: "Caption",
+    *,
+    y_far: float,
+    y_near: float,
+    prefer_above: bool,
+) -> List[Tuple[float, float, float, float]]:
+    """
+    Collect drawings, raster images, and narrow text labels within the
+    vertical search band. No horizontal (column) filter is applied — the
+    cluster's own x-overlap logic will naturally keep single-column figures
+    tight and let full-width figures grow.
+    """
+    page_w = page.rect.x1 - page.rect.x0
+    is_table = caption.kind == "table"
+    label_max = page_w * (_TABLE_LABEL_MAX_PAGE_FRACTION
+                          if is_table else _LABEL_MAX_PAGE_FRACTION)
+    cx0, cy0, cx1, cy1 = caption.bbox
+
+    def in_vertical_region(ry0: float, ry1: float) -> bool:
+        if prefer_above:
+            # Rect's TOP must be strictly above the caption top; the bottom
+            # may slightly extend into the caption box by a few points (some
+            # figures' outer dashed borders end 1-2pt below caption top).
+            return ry0 < cy0 and ry1 < cy1 + 3 and ry1 >= y_far
+        return ry1 > cy1 and ry0 > cy0 - 3 and ry0 <= y_far
+
+    content: List[Tuple[float, float, float, float]] = []
+
+    page_rect = page.rect
+    for d in page.get_drawings():
+        r = d.get("rect")
+        if r is None:
+            continue
+        # Reject noise (dots / tiny artifacts). A horizontal rule line has
+        # h=0 but w >> 0.5 — keep those: they anchor a table's vertical
+        # extent when the data cells are text-only.
+        if r.width < 0.5 and r.height < 0.5:
+            continue
+        # Reject drawings that extend off the page: these are almost always
+        # background layers, crop marks, or rendering artifacts rather than
+        # figure content (no paper actually draws outside the trim box).
+        if r.x0 < page_rect.x0 - 2 or r.x1 > page_rect.x1 + 2:
+            continue
+        if r.y0 < page_rect.y0 - 2 or r.y1 > page_rect.y1 + 2:
+            continue
+        if in_vertical_region(r.y0, r.y1):
+            content.append((r.x0, r.y0, r.x1, r.y1))
+
+    try:
+        for img in page.get_image_info(hashes=False, xrefs=False):
+            b = img.get("bbox")
+            if not b:
+                continue
+            if in_vertical_region(b[1], b[3]):
+                content.append(tuple(b))
+    except Exception:
+        pass
+
+    for b in page.get_text("blocks"):
+        if len(b) < 7:
+            continue
+        bx0, by0, bx1, by1, btext, _, btype = b[:7]
+        if btype != 0:
+            continue
+        if (bx0, by0, bx1, by1) == caption.bbox:
+            continue
+        btxt = btext.strip()
+        if (btxt.startswith("Fig. ")
+                or btxt.startswith("Figure ")
+                or btxt.startswith("TABLE ")
+                or btxt.startswith("Table ")
+                or btxt.startswith("Listing ")):
+            continue
+        width = bx1 - bx0
+        height = by1 - by0
+        if width > label_max:
+            continue
+        # Body-text guard: a medium-width block that's also tall is almost
+        # certainly a body paragraph that slipped under label_max.
+        if (width > page_w * _LABEL_BODY_WIDTH_FRACTION
+                and height > _LABEL_BODY_HEIGHT_PT):
+            continue
+        if in_vertical_region(by0, by1):
+            content.append((bx0, by0, bx1, by1))
+
+    return content
+
+
+def _pick_anchor(
+    content: List[Tuple[float, float, float, float]],
+    caption: "Caption",
+    page_rect: pymupdf.Rect,
+    *,
+    prefer_above: bool,
+) -> Tuple[float, float, float, float]:
+    """
+    Pick the anchor rect: the candidate closest to the caption (in y) whose
+    x-range overlaps the caption's x-center by at least the alignment slop.
+    If none qualifies (caption sits over whitespace — uncommon for real
+    figures), fall back to the y-nearest candidate.
+    """
+    cx0, _, cx1, _ = caption.bbox
+    cap_cx = (cx0 + cx1) / 2.0
+    page_w = page_rect.x1 - page_rect.x0
+    slop = max(page_w * _CAPTION_ALIGN_FRACTION, _CAPTION_ALIGN_MIN_PT)
+    cap_x_lo = cap_cx - slop
+    cap_x_hi = cap_cx + slop
+
+    if prefer_above:
+        content.sort(key=lambda r: -r[3])  # largest bottom first
+    else:
+        content.sort(key=lambda r: r[1])   # smallest top first
+
+    for r in content:
+        if r[2] >= cap_x_lo and r[0] <= cap_x_hi:
+            return r
+    return content[0]
+
+
+def _grow_cluster(
+    content: List[Tuple[float, float, float, float]],
+    anchor: Tuple[float, float, float, float],
+    *,
+    gap_pt: float,
+) -> List[Tuple[float, float, float, float]]:
+    """
+    Iteratively grow the cluster outward from the anchor by (y-proximity,
+    x-overlap). This is the key step that lets a full-width figure expand
+    horizontally once an anchor is chosen, while a single-column figure
+    never accretes cross-column body text.
+    """
+    cluster = [anchor]
+    x0, y0, x1, y1 = anchor
+
+    changed = True
+    while changed:
+        changed = False
+        for r in content:
+            if r in cluster:
+                continue
+            # y-gap: the rect must touch the cluster's y-extent with at
+            # most gap_pt of slack in either direction.
+            r_y0, r_y1 = r[1], r[3]
+            if r_y1 < y0 - gap_pt or r_y0 > y1 + gap_pt:
+                continue
+            # x-overlap with the cluster (± slop).
+            r_x0, r_x1 = r[0], r[2]
+            if r_x1 < x0 - _X_OVERLAP_SLOP_PT or r_x0 > x1 + _X_OVERLAP_SLOP_PT:
+                continue
+            cluster.append(r)
+            x0 = min(x0, r_x0)
+            y0 = min(y0, r_y0)
+            x1 = max(x1, r_x1)
+            y1 = max(y1, r_y1)
+            changed = True
+
+    return cluster
 
 
 def crop_figure_region(
     page: pymupdf.Page,
-    caption: Caption,
+    caption: "Caption",
     *,
     max_height_pt: float = 560.0,
     gap_pt: float = 45.0,
+    other_captions: Optional[List["Caption"]] = None,
 ) -> Optional[pymupdf.Rect]:
     """
     Compute a bounding box for the figure associated with a caption.
@@ -222,12 +446,12 @@ def crop_figure_region(
     Strategy:
         1. Tables whose block already contains the data rows (block height
            > 30pt) → use the block bbox directly.
-        2. Otherwise: look above the caption (figures / listings) or below
-           (IEEE tables with caption above data). Within the caption's
-           column, collect drawings, raster images, and narrow text labels
-           as "figure content". Cluster starting from the rect nearest the
-           caption and extend while the gap stays below gap_pt. Return the
-           tight bounding box of that cluster.
+        2. Otherwise: bound the vertical search region by the caption on the
+           near side and by the nearest OTHER caption (if any) on the far
+           side. Collect drawings + images + narrow labels in that band,
+           pick an anchor rect aligned with the caption's x-center, and
+           grow the cluster iteratively via y-proximity AND x-overlap.
+           Return the cluster's tight bounding box.
     """
     page_rect = page.rect
     cx0, cy0, cx1, cy1 = caption.bbox
@@ -241,104 +465,37 @@ def crop_figure_region(
             min(page_rect.y1 - 2, cy1 + 3),
         )
 
-    # ---- Case 2: caption-anchored crop ----
-    col_x0, col_x1 = _compute_column(page_rect, caption.bbox)
-    col_w = col_x1 - col_x0
-
+    # ---- Case 2: caption-anchored crop (v5) ----
     prefer_above = caption.kind != "table"
-    if prefer_above:
-        y_near = cy0
-        y_far = max(page_rect.y0 + 2, cy0 - max_height_pt)
-    else:
-        y_near = cy1
-        y_far = min(page_rect.y1 - 2, cy1 + max_height_pt)
+    other_captions = [c for c in (other_captions or []) if c is not caption]
 
-    def in_region(ry0: float, ry1: float, rx0: float, rx1: float) -> bool:
-        if max(rx0, col_x0) >= min(rx1, col_x1):
-            return False
-        if prefer_above:
-            return ry1 <= y_near + 1 and ry1 >= y_far
-        return ry0 >= y_near - 1 and ry0 <= y_far
+    y_far, y_near = _vertical_search_bounds(
+        page_rect, caption, other_captions,
+        max_height_pt=max_height_pt, prefer_above=prefer_above,
+    )
 
-    content: List[Tuple[float, float, float, float]] = []
-
-    # Vector drawings
-    for d in page.get_drawings():
-        r = d.get("rect")
-        if r is None:
-            continue
-        if r.width < 0.5 or r.height < 0.5:
-            continue
-        if in_region(r.y0, r.y1, r.x0, r.x1):
-            content.append((r.x0, r.y0, r.x1, r.y1))
-
-    # Raster images
-    try:
-        for img in page.get_image_info(hashes=False, xrefs=False):
-            b = img.get("bbox")
-            if not b:
-                continue
-            if in_region(b[1], b[3], b[0], b[2]):
-                content.append(tuple(b))
-    except Exception:
-        pass
-
-    # Narrow text labels (figure legends / node labels)
-    for b in page.get_text("blocks"):
-        if len(b) < 7:
-            continue
-        bx0, by0, bx1, by1, btext, _, btype = b[:7]
-        if btype != 0:
-            continue
-        # Skip the caption block itself
-        if (bx0, by0, bx1, by1) == caption.bbox:
-            continue
-        btxt = btext.strip()
-        # Skip other caption-like blocks so they don't pull the bbox sideways
-        if (btxt.startswith("Fig. ")
-                or btxt.startswith("Figure ")
-                or btxt.startswith("TABLE ")
-                or btxt.startswith("Table ")
-                or btxt.startswith("Listing ")):
-            continue
-        # Only narrow blocks are figure labels; wide blocks are body text
-        if bx1 - bx0 > col_w * 0.75:
-            continue
-        if in_region(by0, by1, bx0, bx1):
-            content.append((bx0, by0, bx1, by1))
-
+    content = _collect_content_candidates(
+        page, caption,
+        y_far=y_far, y_near=y_near, prefer_above=prefer_above,
+    )
     if not content:
         return None
 
-    # Cluster: greedy from the rect nearest the caption
-    if prefer_above:
-        content.sort(key=lambda r: -r[3])
-        cluster = [content[0]]
-        cur_top = content[0][1]
-        for r in content[1:]:
-            if r[3] >= cur_top - gap_pt:
-                cluster.append(r)
-                cur_top = min(cur_top, r[1])
-            else:
-                break
-    else:
-        content.sort(key=lambda r: r[1])
-        cluster = [content[0]]
-        cur_bot = content[0][3]
-        for r in content[1:]:
-            if r[1] <= cur_bot + gap_pt:
-                cluster.append(r)
-                cur_bot = max(cur_bot, r[3])
-            else:
-                break
+    anchor = _pick_anchor(content, caption, page_rect, prefer_above=prefer_above)
+    # Tables have tight row spacing (<5pt) and are followed by clear whitespace
+    # (>10pt) before body text / section headings. A tighter gap threshold
+    # prevents a footnote from bridging into the next section. Figures need
+    # a generous gap to tolerate arrow-connector whitespace between boxes.
+    effective_gap = 10.0 if caption.kind == "table" else gap_pt
+    cluster = _grow_cluster(content, anchor, gap_pt=effective_gap)
 
     min_x = min(r[0] for r in cluster)
     min_y = min(r[1] for r in cluster)
     max_x = max(r[2] for r in cluster)
     max_y = max(r[3] for r in cluster)
 
-    min_x = max(col_x0, min_x - 3)
-    max_x = min(col_x1, max_x + 3)
+    min_x = max(page_rect.x0 + 2, min_x - 3)
+    max_x = min(page_rect.x1 - 2, max_x + 3)
     min_y = max(page_rect.y0 + 2, min_y - 5)
     max_y = min(page_rect.y1 - 2, max_y + 5)
 
@@ -350,6 +507,42 @@ def crop_figure_region(
     if max_y - min_y < 15 or max_x - min_x < 30:
         return None
     return pymupdf.Rect(min_x, min_y, max_x, max_y)
+
+
+def _compute_column(
+    page_rect: pymupdf.Rect,
+    cap_bbox: Tuple[float, float, float, float],
+) -> Tuple[float, float]:
+    """
+    Legacy caption-width column heuristic.
+
+    Kept only for listing extraction (`extract_listing_text`) — which still
+    benefits from a coarse left-vs-right column classification to filter
+    body blocks. Figure cropping no longer uses this function; use
+    `crop_figure_region` instead, which determines horizontal extent from
+    content rather than caption width.
+    """
+    cx0, _, cx1, _ = cap_bbox
+    cap_cx = (cx0 + cx1) / 2.0
+    pw = page_rect.x1 - page_rect.x0
+    mid = (page_rect.x0 + page_rect.x1) / 2.0
+    cw = cx1 - cx0
+
+    if cw > pw * 0.6:
+        return (page_rect.x0 + 2, page_rect.x1 - 2)
+    if cw > pw * 0.3:
+        # On a tie (caption centered exactly on page midline) prefer full
+        # width — single-column figures always have a caption offset to one
+        # side, so centered captions almost always indicate a wide figure.
+        if cap_cx < mid - 0.5:
+            return (page_rect.x0 + 2, mid - 2)
+        if cap_cx > mid + 0.5:
+            return (mid + 2, page_rect.x1 - 2)
+        return (page_rect.x0 + 2, page_rect.x1 - 2)
+    return (
+        max(page_rect.x0 + 2, cx0 - 15),
+        min(page_rect.x1 - 2, cx1 + 15),
+    )
 
 
 def render_region(page: pymupdf.Page, bbox: pymupdf.Rect, dpi: int = 200) -> bytes:
@@ -421,6 +614,12 @@ def extract_all(pdf_path: str, output_dir: str, dpi: int = 200) -> Dict[str, Any
     listings_out: List[Dict[str, Any]] = []
     seen_hashes: set = set()
 
+    # Group captions by page once so each crop can look at its neighbors on
+    # the same page without re-scanning.
+    captions_by_page: Dict[int, List[Caption]] = {}
+    for cap in captions:
+        captions_by_page.setdefault(cap.page, []).append(cap)
+
     for cap in captions:
         page = doc[cap.page]
 
@@ -440,7 +639,8 @@ def extract_all(pdf_path: str, output_dir: str, dpi: int = 200) -> Dict[str, Any
             })
             continue
 
-        bbox = crop_figure_region(page, cap)
+        other_caps = captions_by_page.get(cap.page, [])
+        bbox = crop_figure_region(page, cap, other_captions=other_caps)
         if bbox is None:
             continue
         try:
@@ -466,6 +666,28 @@ def extract_all(pdf_path: str, output_dir: str, dpi: int = 200) -> Dict[str, Any
         except Exception:
             width = height = None
 
+        page_rect = page.rect
+        page_w = page_rect.x1 - page_rect.x0
+        cap_cx = (cap.bbox[0] + cap.bbox[2]) / 2.0
+        mid = (page_rect.x0 + page_rect.x1) / 2.0
+        crop_w = bbox.x1 - bbox.x0
+        crop_cx = (bbox.x0 + bbox.x1) / 2.0
+        # Coarse crop class lets the validator flag surprising crops (e.g.
+        # caption centered on midline but crop labeled half-width). We
+        # distinguish between "half-column-aligned wide" and "centered wide"
+        # because some paper templates place a table or figure centered
+        # between the two columns (spanning ~55% of page width) rather than
+        # aligned to a column edge; without this the validator would flag it.
+        if crop_w > page_w * 0.6:
+            crop_class = "full_width"
+        elif crop_w > page_w * 0.3:
+            if abs(crop_cx - mid) < page_w * 0.02:
+                crop_class = "centered_wide"
+            else:
+                crop_class = "half_width_right" if crop_cx > mid else "half_width_left"
+        else:
+            crop_class = "narrow"
+
         figures_out.append({
             "figure_id": f"{prefix}_{cap.number}",
             "paper_label": cap.label,
@@ -478,10 +700,19 @@ def extract_all(pdf_path: str, output_dir: str, dpi: int = 200) -> Dict[str, Any
             "width_px": width,
             "height_px": height,
             "dpi": dpi,
-            "extraction_method": "caption_anchored_v4",
+            "extraction_method": "caption_anchored_v5",
             # belongs_to_chapter and level2_breakdown are populated later by
             # the Figure Analyst agent; left empty here.
             "belongs_to_chapter": None,
+            "diagnostics": {
+                "page_width_pt": round(page_w, 2),
+                "caption_cx_pt": round(cap_cx, 2),
+                "page_mid_pt": round(mid, 2),
+                "caption_offset_from_mid_pt": round(cap_cx - mid, 2),
+                "crop_width_pt": round(crop_w, 2),
+                "crop_width_ratio": round(crop_w / page_w, 3) if page_w else None,
+                "crop_class": crop_class,
+            },
         })
 
     doc.close()
