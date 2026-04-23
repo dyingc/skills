@@ -35,18 +35,18 @@ codex --version  # must be available
 Use `-m` to select a model and `-c` to tune reasoning effort:
 
 ```bash
-# Set model (default: whatever is in ~/.codex/config.toml)
+# Set model (default: whatever is in ~/.codex/config.toml): gpt-5.4-pro (default) | gpt-5.4 | gpt-5.4-mini
 codex exec -m gpt-5.4-pro ...
 
-# Set reasoning effort: low | medium | high | xhigh (default)
+# Set reasoning effort: low | medium (default) | high | xhigh
 codex exec -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' ...
 ```
 
 | Scenario | Recommended flags |
 |----------|-------------------|
 | Deep design review | `-m gpt-5.4-pro` (default xhigh reasoning) |
-| Quick code review | `-m gpt-5.4-pro -c 'model_reasoning_effort="medium"'` |
-| Fast validation | `-m gpt-5.4 -c 'model_reasoning_effort="medium"'` |
+| Code review | `-m gpt-5.4-pro -c 'model_reasoning_effort="medium"'` |
+| Fast validation | `-m gpt-5.4 -c 'model_reasoning_effort="high"'` |
 | Budget-conscious | `-m gpt-5.4-mini` |
 
 When Codex times out (>300s), retry with lower reasoning effort before giving up.
