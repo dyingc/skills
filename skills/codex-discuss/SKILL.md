@@ -35,10 +35,14 @@ codex --version  # must be available
 Use `-m` to select a model and `-c` to tune reasoning effort:
 
 ```bash
-# Set model (default: whatever is in ~/.codex/config.toml): gpt-5.4-pro (default) | gpt-5.4 | gpt-5.4-mini
+# Set model (default: whatever is in ~/.codex/config.toml, typically gpt-5.4)
+# Available: gpt-5.4-pro | gpt-5.4 | gpt-5.4-mini
 codex exec -m gpt-5.4-pro ...
 
-# Set reasoning effort: low | medium (default) | high | xhigh
+# Set reasoning effort (valid values vary by model):
+#   gpt-5.4-pro:  medium | high | xhigh (default xhigh)
+#   gpt-5.4:      low | medium | high | xhigh (default none)
+#   gpt-5.4-mini: low | medium | high | xhigh (default none)
 codex exec -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' ...
 ```
 
