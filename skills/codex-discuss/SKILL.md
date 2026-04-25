@@ -75,11 +75,19 @@ Why this is required:
 
 Rules:
 - Do NOT wrap `codex exec` in `timeout`.
+- Do NOT set the Bash tool `timeout` field for `codex exec` background calls.
 - Do NOT append `&`, or use `nohup`, `tmux`, or `screen`.
 - Use the Bash tool's `run_in_background: true` option.
 - Use `BashOutput` to wait for the background job and collect completion output.
 - Do NOT read `response-N.md` or start the next round until `BashOutput` shows the job completed.
 - If the job exits non-zero or `response-N.md` is missing/empty, retry once with lower reasoning effort; otherwise record the failure and continue to conclusion.
+
+Supervision:
+- There is intentionally no fixed wall-clock timeout for Codex discussion rounds.
+- Keep the returned background shell ID until the round is completed or explicitly abandoned.
+- If `BashOutput` returns `running`, keep waiting with `BashOutput`; do not treat "still running" as failure.
+- If the user cancels, the discussion is no longer needed, or output shows an unrecoverable setup/authentication error, use `KillBash` on the background shell ID and record "Codex did not respond".
+- If background execution is unavailable or no shell ID is returned, do not fall back to foreground `codex exec`; record the failure or ask the user to enable Claude Code background tasks.
 
 ## Pre-Discussion Requirements
 
@@ -305,6 +313,8 @@ You should ACCEPT Codex's answer when:
 - Reusing an old discussion directory instead of creating fresh
 - Treating a still-running job, timeout, or empty output as consensus
 - Running `codex exec` in foreground Bash inside Claude Code
+- Setting a fixed Bash timeout that recreates the foreground timeout problem
+- Abandoning a still-running Codex job without `KillBash`
 - Expanding discussion scope in later rounds beyond the original topic
 
 ## When to Suggest This Skill
