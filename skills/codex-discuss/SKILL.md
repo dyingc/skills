@@ -53,7 +53,7 @@ codex exec -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' ...
 | Fast validation | `-m gpt-5.4 -c 'model_reasoning_effort="high"'` |
 | Budget-conscious | `-m gpt-5.4-mini` |
 
-When Codex times out (>300s), retry with lower reasoning effort before giving up.
+If Codex exits non-zero or returns empty output, retry once with lower reasoning effort before giving up.
 
 ## Modes
 
@@ -64,6 +64,22 @@ When Codex times out (>300s), retry with lower reasoning effort before giving up
 | `validate` | `read-only` | "Challenge assumptions. Point out what could go wrong. Be devil's advocate. Do not edit files." |
 
 All modes use `--sandbox read-only` to prevent Codex from modifying files.
+
+## Claude Code Bash Execution Requirement
+
+When using this skill inside Claude Code, every Bash tool call that starts `codex exec` MUST set `run_in_background: true`.
+
+Why this is required:
+- Claude Code foreground Bash calls can hit tool-level timeouts before Codex finishes.
+- Background execution changes only process supervision; the discussion contract remains file-based via `-o "$DISCUSS_DIR/response-N.md"`.
+
+Rules:
+- Do NOT wrap `codex exec` in `timeout`.
+- Do NOT append `&`, or use `nohup`, `tmux`, or `screen`.
+- Use the Bash tool's `run_in_background: true` option.
+- Use `BashOutput` to wait for the background job and collect completion output.
+- Do NOT read `response-N.md` or start the next round until `BashOutput` shows the job completed.
+- If the job exits non-zero or `response-N.md` is missing/empty, retry once with lower reasoning effort; otherwise record the failure and continue to conclusion.
 
 ## Pre-Discussion Requirements
 
@@ -128,28 +144,35 @@ Rules:
 
 ### 3. Run Codex Round 1
 
-```bash
-timeout 300 codex exec \
-  -m gpt-5.4-pro \
-  --sandbox read-only --skip-git-repo-check \
-  -o "$DISCUSS_DIR/response-1.md" \
-  "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
+Use the Bash tool with `run_in_background: true`:
+
+```text
+command: |
+  codex exec \
+    -m gpt-5.4-pro \
+    --sandbox read-only --skip-git-repo-check \
+    -o "$DISCUSS_DIR/response-1.md" \
+    "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
+run_in_background: true
 ```
 
-If this times out, retry with reduced reasoning effort:
-```bash
-timeout 300 codex exec \
-  -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' \
-  --sandbox read-only --skip-git-repo-check \
-  -o "$DISCUSS_DIR/response-1.md" \
-  "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
+If this exits non-zero or produces empty output, retry with reduced reasoning effort:
+
+```text
+command: |
+  codex exec \
+    -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' \
+    --sandbox read-only --skip-git-repo-check \
+    -o "$DISCUSS_DIR/response-1.md" \
+    "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
+run_in_background: true
 ```
 
-After execution, verify:
-- Exit code is 0
+After `BashOutput` reports completion, verify:
+- Background job exit code is 0
 - `response-1.md` exists and non-empty
 
-If Codex fails or times out, note "Codex did not respond" and skip to step 6 with available information.
+If Codex fails or produces no useful response, note "Codex did not respond" and skip to step 6 with available information.
 
 ### 4. Read response and INDEPENDENTLY evaluate
 
@@ -192,11 +215,15 @@ Write `$DISCUSS_DIR/round-2.md`:
 
 Run Codex with previous context:
 
-```bash
-timeout 300 codex exec \
-  --sandbox read-only --skip-git-repo-check \
-  -o "$DISCUSS_DIR/response-2.md" \
-  "{task_framing} Read $DISCUSS_DIR/round-1.md, $DISCUSS_DIR/response-1.md, and $DISCUSS_DIR/round-2.md for full context. Answer only the numbered questions in round-2.md. Do not edit files."
+Use the Bash tool with `run_in_background: true`:
+
+```text
+command: |
+  codex exec \
+    --sandbox read-only --skip-git-repo-check \
+    -o "$DISCUSS_DIR/response-2.md" \
+    "{task_framing} Read $DISCUSS_DIR/round-1.md, $DISCUSS_DIR/response-1.md, and $DISCUSS_DIR/round-2.md for full context. Answer only the numbered questions in round-2.md. Do not edit files."
+run_in_background: true
 ```
 
 #### When to use Round 3 or 4
@@ -213,11 +240,15 @@ timeout 300 codex exec \
 
 **Round 3/4 rule**: Must have genuine unresolved tension. Frame as resolution:
 
-```bash
-timeout 300 codex exec \
-  --sandbox read-only --skip-git-repo-check \
-  -o "$DISCUSS_DIR/response-3.md" \
-  "This is round 3 of 4 max. Read all files in $DISCUSS_DIR/ for context. Address the specific contradiction: [describe]. Do not edit files."
+Use the Bash tool with `run_in_background: true`:
+
+```text
+command: |
+  codex exec \
+    --sandbox read-only --skip-git-repo-check \
+    -o "$DISCUSS_DIR/response-3.md" \
+    "This is round 3 of 4 max. Read all files in $DISCUSS_DIR/ for context. Address the specific contradiction: [describe]. Do not edit files."
+run_in_background: true
 ```
 
 Round 4 is the absolute maximum. If no resolution, document the impasse.
@@ -272,7 +303,8 @@ You should ACCEPT Codex's answer when:
 - Re-running rounds hoping for a different answer
 - Referencing files containing secrets or credentials
 - Reusing an old discussion directory instead of creating fresh
-- Treating timeout/empty output as consensus
+- Treating a still-running job, timeout, or empty output as consensus
+- Running `codex exec` in foreground Bash inside Claude Code
 - Expanding discussion scope in later rounds beyond the original topic
 
 ## When to Suggest This Skill
