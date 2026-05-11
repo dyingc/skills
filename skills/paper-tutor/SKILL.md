@@ -46,18 +46,29 @@ Paper Tutor uses a **swarm of specialized agents** to transform complex academic
 
 ## Non-negotiable Multi-modal Rules
 
-**These rules exist because past runs produced (a) text-only walls of description that failed to teach figures and formulas, and (b) figure-centric "museum tours" where every `####` heading was the name of a figure. They are enforced by the validator and the Editor-in-Chief.**
+**These rules exist because past runs produced (a) text-only walls of description that failed to teach figures and formulas, (b) figure-centric "museum tours" where every `####` heading was the name of a figure, and (c) Q&A-style output that feels like a review quiz rather than a coherent lecture. They are enforced by the validator and the Editor-in-Chief.**
 
-0. **Teaching philosophy: concept-first, not figure-first.** This is the most important rule and it dominates all others.
-   - **Your chapter teaches propositions, not figures.** A proposition is a question (e.g. "为什么单纯 fuzzing 会卡在 magic check 上？") or a claim (e.g. "Driller 的一次完整循环是 fuzzer → concolic → fuzzer → concolic..."). Figures, tables, listings, and formulas are *supporting evidence* for propositions, not subjects of explanation.
-   - **Every `####` heading must be a proposition**, not a figure name. Before writing any `####` heading, ask: "If I only show the reader this title, can they infer what question I am going to answer?" If the title is `#### 概念 3：Venn 图（Figure 5）`, the reader only learns "he's going to describe a figure" — this is a hard-fail.
-   - **Hard-fail regex**: `####` headings that match `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+` (including inside parentheses) are rejected by the Editor-in-Chief and by `validate_execution.py`.
-   - **2+ figures supporting one proposition live in the SAME `####` section**, bound by narrative hinges ("此时", "然而", "到这里"), not in 2+ separate `####` sections. See `references/multimodal-content.md` Example 0 for the primary pattern.
-   - **One figure → one proposition is OK only when that figure single-handedly answers one question.** But if your chapter has 4+ figures, you almost certainly should NOT have 4+ separate `####` sections.
+0. **Teaching philosophy: narrative lecture, not Q&A review.** This is the most important rule and it dominates all others.
+   - **Your chapter reads like a lecture, not a list of answered questions.** Imagine a teacher explaining this paper to a student who has NEVER read it. The teacher does not say "Now let me ask you: why does X fail?" — the teacher says "Let's look at why X fails" and builds up the explanation layer by layer. Your reader should be able to follow the entire chapter without ever having opened the original paper.
+   - **Every `####` heading must be a declarative narrative topic**, not a question and not a figure name. Headings are signposts that tell the reader "here's what I'm about to explain to you" — they should be short declarative phrases or statements.
+     - Good: `#### 传统 concolic execution 的两大根本瓶颈`
+     - Good: `#### 核心洞察：从实现级跃迁到语义级`
+     - Good: `#### 浮点数程序案例：传统方法 vs. ConcoLLMic`
+     - Good: `#### 系统的完整图景与两个范式级改变`
+     - Bad: `#### 传统 concolic execution 面临哪两个根本挑战，以至于几十年的工程努力仍无法攻克？` (question — feels like a review quiz)
+     - Bad: `#### 概念 3：Venn 图（Figure 5）` (figure name — museum tour)
+   - **Hard-fail patterns**: `####` headings that (a) end with `？` (question mark), (b) match `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+` (including inside parentheses), or (c) are phrased as interrogative sentences are rejected by the Editor-in-Chief and by `validate_execution.py`.
+   - **Chapter-level narrative arc is mandatory.** Each chapter must have:
+     1. An **opening orientation** (1-3 sentences after `### 🎯 核心讲解`, NOT under 前置知识) that tells the reader: "In this section, we will understand X. The key insight is Y, and we'll build up to it step by step." This gives the reader a roadmap. **`### 🎯 核心讲解` MUST appear as its own H3 heading** to break out of the 前置知识 nesting — without it, all `####` topics will appear as children of 前置知识 in the document outline.
+     2. **Smooth transitions** between `####` sections. The end of each section should naturally lead into the next one (e.g., "现在我们理解了 X 的瓶颈所在，接下来看看 ConcoLLMic 如何通过 Y 来突破它。").
+     3. A **closing synthesis** at the end that ties all sections together and bridges to the next chapter.
+   - **2+ figures supporting one topic live in the SAME `####` section**, bound by narrative hinges ("此时", "然而", "到这里"), not in 2+ separate `####` sections. See `references/multimodal-content.md` Example 0 for the primary pattern.
+   - **One figure → one section is OK only when that figure single-handedly illustrates one complete topic.** But if your chapter has 4+ figures, you almost certainly should NOT have 4+ separate `####` sections.
    - **Common rationalizations that mean you are violating this rule** (call yourself out):
-     - "This figure is so important it deserves its own section." → No. Its own *narrative paragraph* in an existing proposition, yes.
-     - "The 4 figures each show a different step, so they need 4 sections." → No. A 4-step process IS the proposition; weave all 4 figures into one section.
+     - "This figure is so important it deserves its own section." → No. Its own *narrative paragraph* in an existing topic, yes.
+     - "The 4 figures each show a different step, so they need 4 sections." → No. A 4-step process IS the topic; weave all 4 figures into one section.
      - "The reader needs to see each figure separately." → They will. Separation is done by narrative paragraphs, not `####` headings.
+     - "I'll use questions as headings to be engaging." → No. Questions make the text feel like a quiz. A lecture is engaging through clear explanation, not through interrogation.
 
 1. **Figures are the soul of a paper — they MUST render, not be described.**
    - Every figure (Figure N / Table N / Listing N) extracted by `extract_figures.py` MUST appear as `![caption](figures/<filename>)` markdown in at least one chapter file, positioned at or near the text that discusses it.
@@ -418,77 +429,88 @@ Launch N chapter agents simultaneously based on intensity level.
 
 从 PDF 中读取「{SECTION_NAME}」的完整内容。
 
-### 4. 先写命题清单（concept-first 的入口 - 不可跳过）
+### 4. 先写讲解提纲（narrative-first 的入口 - 不可跳过）
 
-**这一步是整章写作的起点，也是最容易被跳过的一步。跳过这一步就会退化为 figure-centric 输出。**
+**这一步是整章写作的起点，也是最容易被跳过的一步。跳过这一步就会退化为 figure-centric 或 Q&A-centric 输出。**
 
-1. 打开一个临时记事区（可以是 shared_memory 的 scratch 字段，也可以只是你脑内的列表），写出本章要论证的 **3–8 个命题**。
-2. 每个命题都是**一个问题或一个陈述句**，不是一个图/表/清单的名字。
+你的任务是为一个**没有读过这篇论文的读者**讲解这个章节的内容。像一个老师备课一样，先列出一份讲解提纲：
 
-   **好的命题示例**（来自 Driller 论文）：
-   - "为什么单纯 fuzzing 会卡在 magic check 上？"
-   - "Driller 的一次完整循环是 fuzzer → concolic → fuzzer → concolic..."
-   - "Concolic 为什么必须是 _selective_ 的？全量符号执行不行吗？"
-   - "Driller 相比单独 fuzzing / 单独 symex 的增益是多少？凭什么？"
+1. 打开一个临时记事区，写出本章要讲解的 **3–8 个主题**，按照逻辑递进顺序排列。
+2. 每个主题都是**一个简短的陈述性短语**，表达你要为读者解释的一件事情。主题之间应该有逻辑递进关系（铺垫 → 核心 → 深入 → 总结）。
 
-   **坏的命题示例**（这些是 figure-centric 失败模式，会被 Editor-in-Chief 驳回）：
-   - "概念 3：Venn 图（Figure 5）" ← 不是命题，是图的名字
-   - "Listing 7-10 的案例研究" ← 不是命题，是一次导览
-   - "Table I 的内容" ← 不是命题，是对表的描述
+   **好的主题示例**（来自 Driller 论文）：
+   - "纯 fuzzing 在 magic check 上的失效机制"
+   - "Driller 的核心循环：fuzzer 与 concolic 的交替协作"
+   - "Selective concolic execution 的设计取舍"
+   - "覆盖率与 crash 发现的定量增益"
 
-3. 每个命题成为本章的一个 `#### ...` 小节。**`####` 的标题就是这个问题或陈述，不是"概念 3"+"某张图的名字"**。
+   **好的主题示例**（来自 ConcoLLMic 论文）：
+   - "传统 concolic execution 的两大根本瓶颈"
+   - "核心洞察：从实现级跃迁到语义级"
+   - "浮点数程序案例：传统 SMT 公式爆炸与自然语言约束的对比"
+   - "系统的完整图景与两个范式级改变"
 
-4. **硬性约束**：`#### ...` 标题里**禁止**出现下列字面字符串（括号内也禁止）：
-   - `Figure \d+` 或 `图 \d+`
-   - `Table [IVX]+` 或 `表 [IVX]+`
-   - `Listing \d+` 或 `清单 \d+`
+   **坏的主题示例**（这些会被 Editor-in-Chief 驳回）：
+   - "概念 3：Venn 图（Figure 5）" ← 以图为主题
+   - "Listing 7-10 的案例研究" ← 以代码清单为主题
+   - "Table I 的内容" ← 以表格为主题
+   - "传统 concolic execution 面临哪两个根本挑战？" ← 问句形式，读者会困惑"你为什么要问我这个"
+   - "LLM 为什么能成为关键突破？" ← 问句形式，适合已读过论文的人复习，不适合第一次学习
+
+3. 每个主题成为本章的一个 `#### ...` 小节。**`####` 的标题就是这个陈述性短语**。
+
+4. **硬性约束**：`#### ...` 标题里**禁止**：
+   - 以 `？` 结尾（问句形式）
+   - 出现 `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+`（括号内也禁止）
 
    违反即被 validator 和 Editor-in-Chief 立即驳回。
 
-5. 检查 `concept_coverage_map`：如果某个命题所涉及的概念已被其他 agent 覆盖，决定是引用还是协商归属。
+5. **在前置知识之后、第一个 `####` 之前，写一个 `### 🎯 核心讲解` 标题**。这个 H3 标题是**必须的结构元素**——没有它，所有 `####` 主题都会在文档大纲中嵌套在 `### 📚 前置知识` 之下，导致读者看到的结构是"所有内容都是前置知识"。紧跟这个标题之后，写 2-4 句章节开篇综述，告诉读者"本章要带你理解什么，核心洞察是什么，我们会怎么一步步讲到那里"。
 
-### 5. 把命题映射到支撑证据（图、表、公式、代码、文字）
+6. 检查 `concept_coverage_map`：如果某个主题所涉及的概念已被其他 agent 覆盖，决定是引用还是协商归属。
 
-**核心原则**：图是命题的证据，不是命题本身。
+### 5. 把主题映射到支撑证据（图、表、公式、代码、文字）
+
+**核心原则**：图是讲解的辅助材料，不是讲解本身。
 
 1. 从 `paper_metadata.json.figures[]` 筛选所有 `belongs_to_chapter == 本章 id` 的条目。把它们记作 `my_figures`。
-2. **把 `my_figures` 分配给你上一步写好的命题**：
+2. **把 `my_figures` 分配给你上一步写好的主题**：
 
    ```
-   命题 A: "为什么单纯 fuzzing 会卡在 magic check 上？"
+   主题 A: "纯 fuzzing 在 magic check 上的失效机制"
      证据: Listing 1 + Figure 1 (CFG)
-   命题 B: "Driller 的一次完整循环是怎么跑的？"
+   主题 B: "Driller 的核心循环：fuzzer 与 concolic 的交替协作"
      证据: Figure 1 → Figure 2 → Figure 3 → Figure 4 (四张图穿成一条时间线)
-   命题 C: "Concolic 只在 fuzzer 卡住时介入，代价和收益分别是什么？"
+   主题 C: "Selective concolic execution 的设计取舍"
      证据: Figure 6 (介入时间线) + Figure 7 (调用次数分布)
-   命题 D: "Driller 比单独 fuzzing 多找到多少 crash？"
+   主题 D: "覆盖率与 crash 发现的定量增益"
      证据: Table II (crash 数字) + Figure 5 (Venn 图)
    ```
 
 3. **分配规则**：
-   - 每张图必须被**至少一个命题**消费（完全没被任何命题用到的图是 orphan figure，向 Editor-in-Chief 报告）。
-   - 每张图**只能在一个命题里"主讲"**（可以在其他命题里被简短回顾引用，但主讲只有一次）。
-   - 一个命题可以消费 0 / 1 / 2+ 张图。0 张图也 OK —— 不是每个命题都需要图。
-   - **避免 figure-centric 陷阱**：如果你发现每个命题都只消费 1 张图、且命题数 == 图数，请重新审视你的命题——你很可能把"图的名字"当成了命题。
-   - **推荐**：多张图连续支撑一个命题时（例如"一次循环"），它们应该进入**同一个 `####` 小节**，用连接词（"此时"、"然而"、"到这里"）串起来。
+   - 每张图必须被**至少一个主题**消费（完全没被任何主题用到的图是 orphan figure，向 Editor-in-Chief 报告）。
+   - 每张图**只能在一个主题里"主讲"**（可以在其他主题里被简短回顾引用，但主讲只有一次）。
+   - 一个主题可以消费 0 / 1 / 2+ 张图。0 张图也 OK —— 不是每个主题都需要图。
+   - **避免 figure-centric 陷阱**：如果你发现每个主题都只消费 1 张图、且主题数 == 图数，请重新审视你的主题——你很可能把"图的名字"当成了主题。
+   - **推荐**：多张图连续支撑一个主题时（例如"一次循环"），它们应该进入**同一个 `####` 小节**，用连接词（"此时"、"然而"、"到这里"）串起来。
 
-4. **嵌入规则（对每个命题的每个证据）**：
+4. **嵌入规则（对每个主题的每个证据）**：
 
    - **图**：用 `![caption](figures/<filename>)` 真实渲染，路径必须是 `figures/<filename>`（禁止 `../figures/` / 绝对路径 / URL）。
-   - **每张图前后**必须有连贯的中文叙事段落（≥150 字），把 `level2_breakdown` 的四个字段 (`what_to_look_at`, `axes_or_structure`, `key_observations`, `teaching_hook`) **融进命题的论证里**——不是列成四条小标题，不是列成四个 bullet，不是贴一段 level1_summary。测试方法：连读这段叙事，它应该像一段完整的议论，而不是四个并列的"说明文"。
-   - **多张图共讲一个命题**：在同一个 `####` 小节里，用"一开始"、"此时"、"但随后"、"到这里"这种时间/逻辑连接词把多张图绑成一条叙事线。**禁止**在同一个命题内部加二级小标题把证据拆开。
-   - **公式**：行内用 `\$expr\$`，块级用 `\$\$expr\$\$`。每个符号必须在公式后立即说明含义。公式必须作为某个命题的证据出现，而不是单独的 `#### 公式 X` 小节。
-   - **Listing**：读取 `listings/listing_*.txt`，以 fenced code block（```` ```c ````、```` ```python ```` 等）嵌入到对应命题里，前后配叙事说明它作为证据支撑了哪个命题。
-   - **表格**：要么嵌入 `figures/table_*.png`，要么重打成小型 markdown 表（≤5 行且有教学段落）。表格同样作为证据进入某个命题的 `####`，不是独立的 `#### 表 X` 小节。
+   - **每张图前后**必须有连贯的中文叙事段落（≥150 字），把 `level2_breakdown` 的四个字段 (`what_to_look_at`, `axes_or_structure`, `key_observations`, `teaching_hook`) **融进讲解的叙事里**——不是列成四条小标题，不是列成四个 bullet，不是贴一段 level1_summary。测试方法：连读这段叙事，它应该像老师在黑板旁指着图说话，而不是四个并列的"说明文"。
+   - **多张图共讲一个主题**：在同一个 `####` 小节里，用"一开始"、"此时"、"但随后"、"到这里"这种时间/逻辑连接词把多张图绑成一条叙事线。**禁止**在同一个主题内部加二级小标题把证据拆开。
+   - **公式**：行内用 `\$expr\$`，块级用 `\$\$expr\$\$`。每个符号必须在公式后立即说明含义。公式必须作为某个主题的讲解材料出现，而不是单独的 `#### 公式 X` 小节。
+   - **Listing**：读取 `listings/listing_*.txt`，以 fenced code block（```` ```c ````、```` ```python ```` 等）嵌入到对应主题里，前后配叙事说明它如何帮助理解当前讲解的概念。
+   - **表格**：要么嵌入 `figures/table_*.png`，要么重打成小型 markdown 表（≤5 行且有教学段落）。表格同样作为证据进入某个主题的 `####`，不是独立的 `#### 表 X` 小节。
 
 5. **禁止自己重新分析图片**：直接使用 Figure Analyst 写好的 `level1_summary` 和 `level2_breakdown`。如果发现分析有误，在 `communication.directed` 中给 `figure_analyst_agent` 发消息。
 
-6. **详细范例**：写之前先读 [references/multimodal-content.md](references/multimodal-content.md) 的 **Example 0**（primary pattern: 一个命题 4 张图），以及 Example 1（edge case: 一个命题 1 张图）。
+6. **详细范例**：写之前先读 [references/multimodal-content.md](references/multimodal-content.md) 的 **Example 0**（primary pattern: 一个主题 4 张图），以及 Example 1（edge case: 一个主题 1 张图）。
 
 **如果 `image_analysis.status != "available"`**：
 - 跳过图片嵌入
 - 但在每个缺图的位置用 Mermaid 重建对应结构，并在正文加脚注：`> 原图未能提取，此处用 Mermaid 重建以帮助理解。`
-- 命题仍然要按 concept-first 的方式写，证据变成 Mermaid + 原文引用。
+- 主题仍然要按 narrative-first 的方式写，证据变成 Mermaid + 原文引用。
 
 ### 6. 更新共享内存
 
@@ -505,25 +527,28 @@ Launch N chapter agents simultaneously based on intensity level.
 
 - 强度级别：{INTENSITY}
 - 目标字数：{TARGET_WORDS}
-- 章节输出必须包含：
-  - `### 📚 前置知识`
-  - **3–8 个 `#### ...` 命题小节**（每个标题是一个问题或陈述，不是图/表/清单的名字）
-  - 每个命题小节的论证结构：`原文依据` / `通俗讲解` / `为什么这个命题成立` / `举例或证据`
-  - 若章节含公式：至少 1 个公式用 LaTeX 渲染，作为某个命题的证据（参见 [references/formula-template.md](references/formula-template.md)）
-- **Concept-first 硬性要求（违反任一项即被 Editor-in-Chief 驳回）**：
-  1. **`####` 标题必须是命题**：每个 `####` 是一个问题或陈述句，**禁止**包含 `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+`（括号内也禁止）。
-  2. **图是命题的证据，不是命题本身**：多张图支撑同一命题时，它们进入**同一个 `####` 小节**，用连接词（"此时"、"然而"、"到这里"）串成一条叙事线；**禁止**把它们拆成多个 `####`。
-  3. **自检 grep**：写完后自己跑一次 `grep -nE '^#{3,4}\s.*(Figure\s*[0-9]|Table\s+[IVXLCDM]|Listing\s*[0-9]|图\s*[0-9]|表\s*[IVXLCDM0-9]|清单\s*[0-9])' chapters/chapter_XX_output.md`，结果必须为空。
+- 章节输出必须包含（按此顺序）：
+  - `### 📚 前置知识`（H3）— 下辖若干 `#### 概念：XXX`（H4）
+  - `### 🎯 核心讲解`（H3）— **此标题是必须的结构元素**，用来在文档大纲中把主题从前置知识中"断开"。没有它，所有 `####` 主题都会嵌套在前置知识之下。
+  - **章节开篇综述**（紧跟 `### 🎯 核心讲解` 之后的 2-4 句话，告诉读者本章要讲什么、为什么重要、以及讲解的逻辑路线）
+  - **3–8 个 `#### ...` 叙事主题小节**（H4，每个标题是一个简短的陈述性短语，按逻辑递进排列）
+  - 每个主题小节的叙事结构：像老师在课堂上讲课一样，先铺设背景/动机，再讲解核心内容，最后自然过渡到下一个主题
+  - 若章节含公式：至少 1 个公式用 LaTeX 渲染，嵌入讲解叙事中（参见 [references/formula-template.md](references/formula-template.md)）
+- **Narrative-first 硬性要求（违反任一项即被 Editor-in-Chief 驳回）**：
+  1. **`####` 标题必须是陈述性主题短语**：每个 `####` 是一个简短的陈述性标题，**禁止**以 `？` 结尾（问句形式），**禁止**包含 `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+`（括号内也禁止）。
+  2. **图是讲解的辅助材料，不是讲解本身**：多张图支撑同一主题时，它们进入**同一个 `####` 小节**，用连接词（"此时"、"然而"、"到这里"）串成一条叙事线；**禁止**把它们拆成多个 `####`。
+  3. **章节必须有叙事弧**：开篇综述 → 逐层递进的主题 → 各主题之间有平滑过渡 → 章节末尾有总结性回顾。读者应该感觉像在听一堂连贯的课，而不是在读一份问答列表。
+  4. **自检 grep**：写完后自己跑一次 `grep -nE '^#{3,4}\s.*(Figure\s*[0-9]|Table\s+[IVXLCDM]|Listing\s*[0-9]|图\s*[0-9]|表\s*[IVXLCDM0-9]|清单\s*[0-9]|？\s*$)' chapters/chapter_XX_output.md`，结果必须为空。
 - **多模态硬性要求（违反任一项即被 Editor-in-Chief 驳回）**：
   1. **所有归属本章的图都必须真实嵌入**：每张 `paper_metadata.json.figures[]` 中 `belongs_to_chapter == 本章 id` 的图，都必须用 `![caption](figures/<filename>)` 语法写入章节文件。仅文字提到 "如图所示" 不算嵌入。
   2. **路径格式**：必须是 `figures/<filename>`（章节文件相对路径），禁止 `../figures/`、绝对路径或 URL。
-  3. **图周边叙事**：每张嵌入图前后必须有 ≥150 字的**连贯中文叙事**（不是 bullet list，不是四个小标题），把 `level2_breakdown` 的 what_to_look_at / axes_or_structure / key_observations / teaching_hook 四项**融进命题的论证里**。测试方法：连读这段叙事，它应该像一段议论，而不是四个并列的说明文。
+  3. **图周边叙事**：每张嵌入图前后必须有 ≥150 字的**连贯中文叙事**（不是 bullet list，不是四个小标题），把 `level2_breakdown` 的 what_to_look_at / axes_or_structure / key_observations / teaching_hook 四项**融进讲解的叙事里**。测试方法：连读这段叙事，它应该像老师指着图说话，而不是四个并列的说明文。
   4. **公式用 LaTeX**：所有公式必须用单美元符号（行内）或双美元符号（块级）包围；每个符号必须在公式后立即说明含义；禁止纯文本公式（例如 "sum from i=1 to n of x_i"）。
-  5. **Listing 用代码块**：`figure_type == "listing"` 的条目必须读取 `listings/listing_*.txt` 并以 fenced code block（```` ```c ````、```` ```python ```` 等）嵌入到对应命题里，前后配叙事说明它是哪个命题的证据。
+  5. **Listing 用代码块**：`figure_type == "listing"` 的条目必须读取 `listings/listing_*.txt` 并以 fenced code block（```` ```c ````、```` ```python ```` 等）嵌入到对应主题里，前后配叙事说明它如何帮助理解当前讲解的概念。
 - 章节输出质量下限（硬性）：
   - 内容单位（中文字符 + 英文词）必须 >= `max(180, 0.35 * TARGET_WORDS)`
   - 低于下限时不得提交 `pending_review`
-- **必读范例**：[references/multimodal-content.md](references/multimodal-content.md) 的 **Example 0** 展示了"一个命题 4 张图"的主 pattern，Example 1 展示了"一个命题 1 张图"的边缘情况。写章节之前**必须**读 Example 0。
+- **必读范例**：[references/multimodal-content.md](references/multimodal-content.md) 的 **Example 0** 展示了"一个主题 4 张图"的主 pattern，Example 1 展示了"一个主题 1 张图"的边缘情况。写章节之前**必须**读 Example 0。
 
 ## 完成后
 
@@ -607,10 +632,12 @@ total_score = (accuracy + clarity + completeness + consistency + word_count) / 5
 - **score < 4.0**: needs_revision（返回修改意见给 Chapter Agent）
 - **硬性否决条件（任一命中即 needs_revision，总分重算为 <= 3.0）**：
   1. 章节未满足最小内容单位阈值（`max(180, 0.35 * word_count_target)`）
-  2. 缺少 `### 📚 前置知识` 或核心命题小节数 < 3
-  3. **Concept-first 违规（最严重）**：章节中存在 `#### ...` 标题匹配正则 `(Figure\s*\d|Table\s+[IVX]|Listing\s*\d|图\s*\d|表\s*[IVX0-9]|清单\s*\d)`，即便在括号里也不行。这说明 agent 把"图的名字"当成了命题，是整个多模态流水线的最主要失败模式。示例：`#### 概念 3：Venn 图（Figure 5）` / `#### State Transition Breakdown (Table I)` / `#### Listing 7-10 的案例研究` — 全部驳回。
-  4. **Figure-centric 结构**：`#### ...` 小节数 >= 章节图数 且每个小节恰好包含一张图。这是"one figure = one section"反模式的信号。正确做法是把多张图织进更少的命题小节。
-  5. **叙事融合不合格**：嵌入图后的 150 字区间里出现 `**什么要看** / **结构** / **观察** / **教学钩**` 这类四字标签列表或 bullet list（把 `level2_breakdown` 硬塞成四个子标题）。必须是连贯的议论叙事。
+  2. 缺少 `### 📚 前置知识` 或缺少 `### 🎯 核心讲解`（导致所有 `####` 主题嵌套在前置知识之下）或核心主题小节数 < 3
+  3. **Narrative-first 违规（最严重）**：章节中存在 `#### ...` 标题匹配正则 `(Figure\s*\d|Table\s+[IVX]|Listing\s*\d|图\s*\d|表\s*[IVX0-9]|清单\s*\d)`，即便在括号里也不行。这说明 agent 把"图的名字"当成了主题标题。示例：`#### 概念 3：Venn 图（Figure 5）` / `#### State Transition Breakdown (Table I)` / `#### Listing 7-10 的案例研究` — 全部驳回。
+  4. **Q&A 结构违规**：章节中存在 `#### ...` 标题以 `？` 结尾。问句式标题让文档读起来像一份复习问答，而不是连贯的讲解。读者不应该看到标题就产生"你为什么在问我这个问题"的困惑。
+  5. **Figure-centric 结构**：`#### ...` 小节数 >= 章节图数 且每个小节恰好包含一张图。这是"one figure = one section"反模式的信号。正确做法是把多张图织进更少的主题小节。
+  6. **缺少叙事弧**：章节没有开篇综述（读者不知道为什么要读这章）、主题之间没有过渡（突然跳到下一个话题没有铺垫）、或者章节结尾没有总结性回顾。
+  7. **叙事融合不合格**：嵌入图后的 150 字区间里出现 `**什么要看** / **结构** / **观察** / **教学钩**` 这类四字标签列表或 bullet list（把 `level2_breakdown` 硬塞成四个子标题）。必须是连贯的议论叙事。
   6. **图片未全部嵌入**：`paper_metadata.json.figures[]` 中存在 `belongs_to_chapter == 本章 id` 的条目，但该图的文件名没有出现在 `![...](figures/<filename>)` 的 Markdown 图片语法中
   7. **图片路径非法**：章节文件出现 `../figures/`、绝对路径、`http://...` 或 `https://...` 的图片路径
   8. **图片缺少讲解**：嵌入图片前后 150 字内没有真实的教学段落（只有 caption 或一句话引用）
@@ -764,11 +791,12 @@ python ~/.claude/skills/paper-tutor/scripts/validate_execution.py [OUTPUT_DIR]
    - Each embedded figure must have ≥150 content units (chinese_chars + english_words) of teaching text immediately after, before the next image / heading / 40-line cap
    - If a figure has `figure_type == "listing"`, the owning chapter file must contain at least one fenced code block (```` ``` ````)
 
-4.5. **Concept-first Heading Validation** (HARD — newest check)
+4.5. **Narrative Heading Validation** (HARD — newest check)
    - Every `####` (level-4) heading in each chapter file must NOT contain `Figure \d+` / `图 \d+` / `Table [IVX]+` / `表 [IVX]+` / `Listing \d+` / `清单 \d+`, even inside parentheses.
-   - Example hard-fail: `#### 概念 3：Venn 图（Figure 5）`, `#### Listing 7-10 的案例研究`, `#### State Transition Breakdown (Table I)`.
-   - Rationale: figure-named headings are the #1 symptom of "museum-tour" chapters where the author walks through figures one by one instead of arguing propositions.
-   - Fix: rewrite the heading as a question or claim, and weave the figure(s) into the narrative as supporting evidence (see `references/multimodal-content.md` Example 0).
+   - Every `####` (level-4) heading must NOT end with `？` (Chinese question mark) or `?` (English question mark). Question-style headings make the output feel like a review quiz rather than a coherent lecture.
+   - Example hard-fail: `#### 概念 3：Venn 图（Figure 5）`, `#### Listing 7-10 的案例研究`, `#### State Transition Breakdown (Table I)`, `#### 为什么传统方法会失败？`.
+   - Rationale: figure-named headings produce "museum-tour" chapters; question headings produce "Q&A review" chapters. Both fail to teach a first-time reader who hasn't read the paper.
+   - Fix: rewrite the heading as a short declarative phrase (e.g., "传统方法的失效机制"), and weave the figure(s) into the narrative as supporting evidence (see `references/multimodal-content.md` Example 0).
 
 5. **Chapter Consistency**
    - Chapter counts in metadata/shared_memory/chapter files/final explanation must match

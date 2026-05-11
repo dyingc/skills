@@ -35,23 +35,23 @@ codex --version  # must be available
 Use `-m` to select a model and `-c` to tune reasoning effort:
 
 ```bash
-# Set model (default: whatever is in ~/.codex/config.toml, typically gpt-5.4)
-# Available: gpt-5.4-pro | gpt-5.4 | gpt-5.4-mini
-codex exec -m gpt-5.4-pro ...
+# Set model (default: whatever is in ~/.codex/config.toml, typically gpt-5.5)
+# Available: gpt-5.5-pro | gpt-5.5 | gpt-5.5-mini
+codex exec -m gpt-5.5-pro ...
 
 # Set reasoning effort (valid values vary by model):
-#   gpt-5.4-pro:  medium | high | xhigh (default xhigh)
-#   gpt-5.4:      low | medium | high | xhigh (default none)
-#   gpt-5.4-mini: low | medium | high | xhigh (default none)
-codex exec -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' ...
+#   gpt-5.5-pro:  medium | high | xhigh (default xhigh)
+#   gpt-5.5:      low | medium | high | xhigh (default none)
+#   gpt-5.5-mini: low | medium | high | xhigh (default none)
+codex exec -m gpt-5.5-pro -c 'model_reasoning_effort="medium"' ...
 ```
 
 | Scenario | Recommended flags |
 |----------|-------------------|
-| Deep design review | `-m gpt-5.4-pro` (default xhigh reasoning) |
-| Code review | `-m gpt-5.4-pro -c 'model_reasoning_effort="medium"'` |
-| Fast validation | `-m gpt-5.4 -c 'model_reasoning_effort="high"'` |
-| Budget-conscious | `-m gpt-5.4-mini` |
+| Deep design review | `-m gpt-5.5-pro` (default xhigh reasoning) |
+| Code review | `-m gpt-5.5-pro -c 'model_reasoning_effort="medium"'` |
+| Fast validation | `-m gpt-5.5 -c 'model_reasoning_effort="high"'` |
+| Budget-conscious | `-m gpt-5.5-mini` |
 
 If Codex exits non-zero or returns empty output, retry once with lower reasoning effort before giving up.
 
@@ -157,7 +157,7 @@ Use the Bash tool with `run_in_background: true`:
 ```text
 command: |
   codex exec \
-    -m gpt-5.4-pro \
+    -m gpt-5.5-pro \
     --sandbox read-only --skip-git-repo-check \
     -o "$DISCUSS_DIR/response-1.md" \
     "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."
@@ -169,7 +169,7 @@ If this exits non-zero or produces empty output, retry with reduced reasoning ef
 ```text
 command: |
   codex exec \
-    -m gpt-5.4-pro -c 'model_reasoning_effort="medium"' \
+    -m gpt-5.5-pro -c 'model_reasoning_effort="medium"' \
     --sandbox read-only --skip-git-repo-check \
     -o "$DISCUSS_DIR/response-1.md" \
     "{task_framing} Answer only the numbered questions in $DISCUSS_DIR/round-1.md. Read only that file and directly referenced files. Do not edit files."

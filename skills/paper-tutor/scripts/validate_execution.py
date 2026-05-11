@@ -68,6 +68,7 @@ FORBIDDEN_HEADING_TOKENS_RE = re.compile(
 # concept headings. Matching is via substring on the heading text.
 STRUCTURAL_HEADING_SUBSTRINGS = (
     "前置知识",
+    "核心讲解",
     "本章核心",
     "核心概念",
     "本章概览",
@@ -561,6 +562,20 @@ def validate_chapter_outputs(
         if "###" not in text and "##" not in text:
             errors.append(
                 f"Chapter '{chapter_id}' ({chapter_file.name}) lacks section structure markers (##/###)"
+            )
+
+        # Hard structure check: if chapter has "前置知识" as an H3, it must also
+        # have a separate H3 section (e.g. "核心讲解" / "核心概念" / "本章核心")
+        # to break the outline nesting. Without it, all #### topics appear as
+        # children of 前置知识 in the document outline.
+        has_prereq_h3 = bool(re.search(r'^###\s.*前置知识', text, re.MULTILINE))
+        has_core_h3 = bool(re.search(r'^###\s.*(?:核心讲解|核心概念|本章核心)', text, re.MULTILINE))
+        if has_prereq_h3 and not has_core_h3:
+            errors.append(
+                f"Chapter '{chapter_id}' ({chapter_file.name}) has '### 前置知识' but no "
+                f"'### 核心讲解' (or equivalent) H3 heading after it. Without this separator, "
+                f"all #### topic headings will nest under 前置知识 in the document outline. "
+                f"Add '### 🎯 核心讲解' between prerequisites and main topics."
             )
 
         stats.append(

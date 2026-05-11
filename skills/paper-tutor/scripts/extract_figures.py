@@ -331,6 +331,17 @@ def _collect_content_candidates(
     except Exception:
         pass
 
+    # The caption's own block bbox defines the column it lives in. A text
+    # block whose x-center falls within that column is "same-column" and is
+    # allowed to be as wide as the caption itself (the caption cannot be
+    # wider than its column). Text blocks outside that column are filtered
+    # by the original label_max to reject body paragraphs.
+    cap_cx = (cx0 + cx1) / 2.0
+    cap_col_w = cx1 - cx0
+    # "Same column" = block center within the caption's x-range ± 15pt.
+    cap_col_lo = cx0 - 15
+    cap_col_hi = cx1 + 15
+
     for b in page.get_text("blocks"):
         if len(b) < 7:
             continue
@@ -348,13 +359,24 @@ def _collect_content_candidates(
             continue
         width = bx1 - bx0
         height = by1 - by0
-        if width > label_max:
-            continue
-        # Body-text guard: a medium-width block that's also tall is almost
-        # certainly a body paragraph that slipped under label_max.
-        if (width > page_w * _LABEL_BODY_WIDTH_FRACTION
-                and height > _LABEL_BODY_HEIGHT_PT):
-            continue
+        block_cx = (bx0 + bx1) / 2.0
+        in_same_col = cap_col_lo <= block_cx <= cap_col_hi
+
+        if in_same_col:
+            # Same column as caption: allow blocks up to the caption's own
+            # column width (+ margin). This correctly admits code listings
+            # and other figure content regardless of page layout (single-
+            # column, two-column, three-column).
+            if width > cap_col_w + 30:
+                continue
+        else:
+            # Different column: apply the original strict filter.
+            if width > label_max:
+                continue
+            if (width > page_w * _LABEL_BODY_WIDTH_FRACTION
+                    and height > _LABEL_BODY_HEIGHT_PT):
+                continue
+
         if in_vertical_region(by0, by1):
             content.append((bx0, by0, bx1, by1))
 
@@ -367,12 +389,13 @@ def _pick_anchor(
     page_rect: pymupdf.Rect,
     *,
     prefer_above: bool,
-) -> Tuple[float, float, float, float]:
+) -> Optional[Tuple[float, float, float, float]]:
     """
     Pick the anchor rect: the candidate closest to the caption (in y) whose
     x-range overlaps the caption's x-center by at least the alignment slop.
-    If none qualifies (caption sits over whitespace — uncommon for real
-    figures), fall back to the y-nearest candidate.
+    Returns None if no candidate is aligned with the caption — this signals
+    that the content collection missed the figure's actual content, rather
+    than silently anchoring on a cross-column element.
     """
     cx0, _, cx1, _ = caption.bbox
     cap_cx = (cx0 + cx1) / 2.0
@@ -389,7 +412,7 @@ def _pick_anchor(
     for r in content:
         if r[2] >= cap_x_lo and r[0] <= cap_x_hi:
             return r
-    return content[0]
+    return None
 
 
 def _grow_cluster(
@@ -397,6 +420,7 @@ def _grow_cluster(
     anchor: Tuple[float, float, float, float],
     *,
     gap_pt: float,
+    x_slop_pt: float = _X_OVERLAP_SLOP_PT,
 ) -> List[Tuple[float, float, float, float]]:
     """
     Iteratively grow the cluster outward from the anchor by (y-proximity,
@@ -420,7 +444,7 @@ def _grow_cluster(
                 continue
             # x-overlap with the cluster (± slop).
             r_x0, r_x1 = r[0], r[2]
-            if r_x1 < x0 - _X_OVERLAP_SLOP_PT or r_x0 > x1 + _X_OVERLAP_SLOP_PT:
+            if r_x1 < x0 - x_slop_pt or r_x0 > x1 + x_slop_pt:
                 continue
             cluster.append(r)
             x0 = min(x0, r_x0)
@@ -482,12 +506,46 @@ def crop_figure_region(
         return None
 
     anchor = _pick_anchor(content, caption, page_rect, prefer_above=prefer_above)
+    if anchor is None:
+        return None
+
     # Tables have tight row spacing (<5pt) and are followed by clear whitespace
     # (>10pt) before body text / section headings. A tighter gap threshold
     # prevents a footnote from bridging into the next section. Figures need
     # a generous gap to tolerate arrow-connector whitespace between boxes.
     effective_gap = 10.0 if caption.kind == "table" else gap_pt
     cluster = _grow_cluster(content, anchor, gap_pt=effective_gap)
+
+    # Two-pass growth for figures (not tables): if the cluster is
+    # significantly narrower than the caption's column, the initial tight
+    # x-overlap slop (10pt) likely failed to bridge a subplot gap (common
+    # in 2x2 or 1x2 figure grids where subplots have 10-15pt spacing).
+    #
+    # Principle: a figure's content cannot be wider than the caption's
+    # column. So we filter candidates to the caption's x-range, then
+    # re-grow with relaxed x-slop. The caption's bbox is the ground truth
+    # for column boundaries — no magic numbers needed.
+    cap_w = cx1 - cx0
+    cluster_x0 = min(r[0] for r in cluster)
+    cluster_x1 = max(r[2] for r in cluster)
+    cluster_w = cluster_x1 - cluster_x0
+    if caption.kind != "table" and cluster_w < cap_w * 0.8:
+        cap_col_lo = cx0 - 15
+        cap_col_hi = cx1 + 15
+        col_content = [
+            r for r in content
+            if (r[0] + r[2]) / 2 >= cap_col_lo
+            and (r[0] + r[2]) / 2 <= cap_col_hi
+        ]
+        if col_content and anchor in col_content:
+            cluster2 = _grow_cluster(
+                col_content, anchor,
+                gap_pt=max(effective_gap, 20.0),
+                x_slop_pt=cap_w * 0.1,
+            )
+            cluster2_w = max(r[2] for r in cluster2) - min(r[0] for r in cluster2)
+            if cluster2_w > cluster_w:
+                cluster = cluster2
 
     min_x = min(r[0] for r in cluster)
     min_y = min(r[1] for r in cluster)
